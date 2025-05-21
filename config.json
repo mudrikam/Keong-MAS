@@ -12,19 +12,5 @@
                 "white_point": 235
             }
         }
-    },
-    "hardware": {
-        "gpu": {
-            "force_gpu": true,
-            "limit_cpu_usage": true,
-            "providers": ["CUDAExecutionProvider", "CPUExecutionProvider"],
-            "debug_info": true,
-            "session_options": {
-                "execution_mode": 1,
-                "graph_optimization_level": 99,
-                "intra_op_num_threads": 1,
-                "inter_op_num_threads": 1
-            }
-        }
     }
 }
