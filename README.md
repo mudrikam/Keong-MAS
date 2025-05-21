@@ -29,7 +29,6 @@ Gak perlu install:
 - Bisa proses banyak foto sekaligus
 - Bisa proses 1 folder
 - Bisa proses multi folder
-- Mau pake CPU atau GPU? Buka file requirements, ganti `rembg` jadi `rembg[cpu]` atau `rembg[gpu]`
 - Offline total, gak perlu internet
 - Resolusi gak dibatesin, terserah lo
 - Langsung pake, gak usah nyeting apa-apa
