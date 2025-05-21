@@ -1,0 +1,30 @@
+{
+    "image_processing": {
+        "levels_adjustment": {
+            "default": {
+                "black_point": 0,
+                "mid_point": 80,
+                "white_point": 230
+            },
+            "recommended": {
+                "black_point": 20,
+                "mid_point": 128,
+                "white_point": 235
+            }
+        }
+    },
+    "hardware": {
+        "gpu": {
+            "force_gpu": true,
+            "limit_cpu_usage": true,
+            "providers": ["CUDAExecutionProvider", "CPUExecutionProvider"],
+            "debug_info": true,
+            "session_options": {
+                "execution_mode": 1,
+                "graph_optimization_level": 99,
+                "intra_op_num_threads": 1,
+                "inter_op_num_threads": 1
+            }
+        }
+    }
+}
