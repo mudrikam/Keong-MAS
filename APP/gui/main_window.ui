@@ -140,6 +140,13 @@ QFrame#drop_area_frame[dragActive=&quot;true&quot;] {
          </size>
         </property>
        </spacer>
+      </item>      
+      <item>
+       <widget class="QPushButton" name="stopButton">
+        <property name="text">
+         <string>Stop</string>
+        </property>
+       </widget>
       </item>
       <item>
        <widget class="QPushButton" name="openFolder">

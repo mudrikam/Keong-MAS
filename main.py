@@ -9,7 +9,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.append(current_dir)
 
-from PySide6.QtCore import Qt, QUrl, QSize, Signal, QThread, QObject, QRectF
+from PySide6.QtCore import Qt, QUrl, QSize, Signal, QThread, QObject, QRectF, QTimer
 from PySide6.QtGui import QIcon, QGuiApplication, QImage, QPixmap, QPainter, QPainterPath
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QLabel, 
@@ -412,11 +412,16 @@ class MainWindow(QMainWindow):
         parent_layout.insertWidget(drop_area_index, self.progress_bar)
         
         # Setup drag and drop
-        self.setAcceptDrops(True)
-        
-        # Connect the Open Folder and Open Files buttons
+        self.setAcceptDrops(True)        # Connect the Open Folder and Open Files buttons
         self.open_folder_btn = self.ui.findChild(QPushButton, "openFolder")
         self.open_files_btn = self.ui.findChild(QPushButton, "openFiles")
+        self.stop_button = self.ui.findChild(QPushButton, "stopButton")
+        if self.stop_button:
+            self.stop_button.setEnabled(False)
+            self.stop_button.setStyleSheet("""
+                QPushButton:enabled { background-color: #e74c3c; }
+            """)
+            self.stop_button.clicked.connect(self.on_stop_clicked)
         
         if self.open_folder_btn:
             self.open_folder_btn.clicked.connect(self.open_folder_dialog)
@@ -472,8 +477,7 @@ class MainWindow(QMainWindow):
                 self.reset_ui_state()
                 self.process_files(file_paths)
         else:
-            event.ignore()
-
+            event.ignore()    
     def process_files(self, file_paths):
         # Show progress bar without hiding drop area
         self.progress_bar.show()
@@ -492,6 +496,10 @@ class MainWindow(QMainWindow):
         # Hide the preview image while starting new process
         if hasattr(self, 'preview_image'):
             self.preview_image.hide()
+            
+        # Enable the stop button during processing
+        if hasattr(self, 'stop_button') and self.stop_button:
+            self.stop_button.setEnabled(True)
         
         # Create worker and thread
         self.worker = RemBgWorker(file_paths)
@@ -529,67 +537,60 @@ class MainWindow(QMainWindow):
         if current_file_path and hasattr(self, 'preview_image'):
             # Check if it's a valid file path and exists
             if os.path.exists(current_file_path):
-                self.update_preview_image(current_file_path)
-
+                self.update_preview_image(current_file_path)    
     def update_preview_image(self, file_path):
         """Update the preview image to show the file that is currently being processed"""
-        # Update the title label
+        # Hide all labels when showing preview
         if hasattr(self, 'dnd_label_1') and self.dnd_label_1:
-            self.dnd_label_1.setText("Memproses Gambar")
+            self.dnd_label_1.hide()
         
-        # Update the subtitle with the filename
         if hasattr(self, 'dnd_label_2') and self.dnd_label_2:
-            self.dnd_label_2.setText(os.path.basename(file_path))
+            self.dnd_label_2.hide()
         
-        # Hide the third label during preview
         if hasattr(self, 'dnd_label_3') and self.dnd_label_3:
-            self.dnd_label_3.setText("")
+            self.dnd_label_3.hide()
             
-        # Position and size the preview image
-        margins = 20
-        label_height = 40 if self.dnd_label_1 else 0
+        # Position and size the preview image to fill the entire drop area
+        margins = 10
         self.preview_image.setGeometry(
             margins, 
-            margins + label_height, 
+            margins, 
             self.drop_area.width() - (margins * 2), 
-            self.drop_area.height() - (margins * 2) - (label_height * 2)
+            self.drop_area.height() - (margins * 2)
         )
         
         # Load the image and show it
-        if self.preview_image.setImagePath(file_path):
+        if self.preview_image.setImagePath(file_path):            
             self.preview_image.show()
             print(f"Showing preview for current processing file: {os.path.basename(file_path)}")
-    
+
     def on_file_completed(self, file_path):
         """When a file has been processed, update the preview"""
         # Show preview of the completed file
         if os.path.exists(file_path) and hasattr(self, 'preview_image'):
-            # Update the title label
+            # Hide all labels in the drop area
             if hasattr(self, 'dnd_label_1') and self.dnd_label_1:
-                self.dnd_label_1.setText("Hasil Akhir")
+                self.dnd_label_1.hide()
             
-            # Update the subtitle with the filename
             if hasattr(self, 'dnd_label_2') and self.dnd_label_2:
-                self.dnd_label_2.setText(os.path.basename(file_path))
-            
-            # Hide the third label during preview
+                self.dnd_label_2.hide()
+                
             if hasattr(self, 'dnd_label_3') and self.dnd_label_3:
-                self.dnd_label_3.setText("")
+                self.dnd_label_3.hide()
                 
             # Properly size and position the preview image
-            margins = 20
-            label_height = 40 if self.dnd_label_1 else 0
+            margins = 10
             self.preview_image.setGeometry(
                 margins, 
-                margins + label_height, 
+                margins, 
                 self.drop_area.width() - (margins * 2), 
-                self.drop_area.height() - (margins * 2) - (label_height * 2)
+                self.drop_area.height() - (margins * 2)
             )
             
             # Load the image and show it
             if self.preview_image.setImagePath(file_path):
                 self.preview_image.show()
-                print(f"Showing preview for: {os.path.basename(file_path)}")
+                print(f"Showing final preview for: {os.path.basename(file_path)}")
 
     def resizeEvent(self, event):
         """Event that triggers when the main window is resized"""
@@ -624,13 +625,13 @@ class MainWindow(QMainWindow):
         # Calculate minutes and seconds
         minutes = int(processing_time // 60)
         seconds = int(processing_time % 60)
-        
-        # Format time string in Indonesian
+          # Format time string in Indonesian
         if minutes > 0:
             time_str = f"{minutes} menit {seconds} detik"
         else:
             time_str = f"{seconds} detik"
-          # Notify user with statistics in Indonesian
+          
+        # Notify user with statistics in Indonesian
         QMessageBox.information(
             self, 
             "Proses Selesai", 
@@ -641,22 +642,29 @@ class MainWindow(QMainWindow):
         )
         
         # The preview will remain visible after processing, but we'll provide a way to start new processes
-        
+
     def reset_ui_state(self):
         """Reset the UI to its original state for new processing"""
         # Hide the preview image
         if hasattr(self, 'preview_image'):
             self.preview_image.hide()
             
-        # Reset label texts to original values
+        # Reset label texts to original values and make them visible
         if hasattr(self, 'dnd_label_1') and self.dnd_label_1 and hasattr(self, 'original_label1_text'):
             self.dnd_label_1.setText(self.original_label1_text)
+            self.dnd_label_1.show()
             
         if hasattr(self, 'dnd_label_2') and self.dnd_label_2 and hasattr(self, 'original_label2_text'):
             self.dnd_label_2.setText(self.original_label2_text)
+            self.dnd_label_2.show()
             
         if hasattr(self, 'dnd_label_3') and self.dnd_label_3 and hasattr(self, 'original_label3_text'):
             self.dnd_label_3.setText(self.original_label3_text)
+            self.dnd_label_3.show()
+            
+        # Disable stop button if it exists
+        if hasattr(self, 'stop_button') and self.stop_button:
+            self.stop_button.setEnabled(False)
             
     def open_folder_dialog(self):
         """Handles the Open Folder button click by opening a folder dialog"""
@@ -694,6 +702,24 @@ class MainWindow(QMainWindow):
         is_checked = state == Qt.Checked
         update_auto_crop_setting(is_checked)
         print(f"Auto crop setting {'enabled' if is_checked else 'disabled'}")
+
+    def on_stop_clicked(self):
+        """Handle the Stop button click"""
+        if hasattr(self, 'worker') and self.worker:
+            # Set the abort flag to True
+            self.worker.abort = True
+            
+            # Disable the stop button (will be re-enabled in next process)
+            if hasattr(self, 'stop_button') and self.stop_button:
+                self.stop_button.setEnabled(False)
+                
+            print("Processing aborted by user")
+            
+            # Show a short message
+            QMessageBox.information(self, "Proses Dihentikan", "Proses penghapusan latar belakang telah dihentikan.")
+            
+            # Reset UI after a short delay
+            QTimer.singleShot(500, self.reset_ui_state)
 
 def main():
     app = QApplication(sys.argv)
