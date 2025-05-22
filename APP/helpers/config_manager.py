@@ -29,7 +29,7 @@ DEFAULT_CONFIG = {
     },
     "image_cropping": {
         "enabled": False,
-        "detection_threshold": 5  # Value 0-255 determining what is considered transparent
+        "detection_threshold": 10  # Value 0-255 determining what is considered transparent
     },
     "solid_background": {
         "enabled": False,

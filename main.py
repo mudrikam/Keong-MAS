@@ -86,7 +86,16 @@ class RemBgWorker(QObject):
         
     def get_image_files_in_dir(self, directory):
         image_files = []
-        for root, _, files in os.walk(directory):
+        for root, dirs, files in os.walk(directory):
+            # Skip any directory named "PNG" (case-insensitive)
+            if os.path.basename(root).upper() == "PNG":
+                print(f"Skipping PNG output directory: {root}")
+                continue
+                
+            # Skip processing inside PNG directories by removing them from the dirs list
+            dirs[:] = [d for d in dirs if d.upper() != "PNG"]
+            
+            # Process image files
             for file in files:
                 if file.lower().endswith(('.png', '.jpg', '.jpeg', '.webp', '.bmp')):
                     image_files.append(os.path.join(root, file))
@@ -808,6 +817,11 @@ class MainWindow(QMainWindow):
         
         # Hide progress bar without affecting drop area
         self.progress_bar.hide()
+        
+        # Disable the stop button
+        if hasattr(self, 'stop_button') and self.stop_button:
+            self.stop_button.setEnabled(False)
+            print("Stop button disabled after processing completed")
         
         # Calculate minutes and seconds
         minutes = int(processing_time // 60)
