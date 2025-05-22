@@ -14,7 +14,7 @@ from PySide6.QtGui import QIcon, QGuiApplication, QImage
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QLabel, 
     QProgressBar, QMessageBox, QFrame, QWidget,
-    QFileDialog
+    QFileDialog, QPushButton
 )
 from PySide6.QtUiTools import QUiLoader
 
@@ -254,11 +254,26 @@ class MainWindow(QMainWindow):
         self.progress_bar.setFormat("%p% - %v / %m")
         self.progress_bar.hide()
         
-        # Add progress bar to layout (it will replace the drop area when active)
-        self.ui.centralWidget().layout().addWidget(self.progress_bar)
+        # Insert progress bar above the drop area (not replacing it)
+        # Find the drop area's parent layout
+        parent_layout = self.drop_area.parentWidget().layout()
+        drop_area_index = parent_layout.indexOf(self.drop_area)
+        
+        # Insert the progress bar before the drop area
+        parent_layout.insertWidget(drop_area_index, self.progress_bar)
         
         # Setup drag and drop
         self.setAcceptDrops(True)
+        
+        # Connect the Open Folder and Open Files buttons
+        self.open_folder_btn = self.ui.findChild(QPushButton, "openFolder")
+        self.open_files_btn = self.ui.findChild(QPushButton, "openFiles")
+        
+        if self.open_folder_btn:
+            self.open_folder_btn.clicked.connect(self.open_folder_dialog)
+        
+        if self.open_files_btn:
+            self.open_files_btn.clicked.connect(self.open_files_dialog)
         
         # Worker thread for processing
         self.worker = None
@@ -298,8 +313,7 @@ class MainWindow(QMainWindow):
             event.ignore()
     
     def process_files(self, file_paths):
-        # Hide drop area and show progress bar
-        self.drop_area.hide()
+        # Show progress bar without hiding drop area
         self.progress_bar.show()
         self.progress_bar.setValue(0)
         
@@ -307,7 +321,8 @@ class MainWindow(QMainWindow):
         self.worker = RemBgWorker(file_paths)
         self.thread = QThread()
         self.worker.moveToThread(self.thread)
-          # Connect signals
+        
+        # Connect signals
         self.thread.started.connect(self.worker.process_files)
         self.worker.finished.connect(self.on_processing_finished)
         self.worker.progress.connect(self.update_progress)
@@ -315,6 +330,7 @@ class MainWindow(QMainWindow):
         
         # Start processing
         self.thread.start()
+
     def update_progress(self, value, message=""):
         self.progress_bar.setValue(value)
         if message:
@@ -335,9 +351,8 @@ class MainWindow(QMainWindow):
         self.thread = None
         self.worker = None
         
-        # Show drop area again
+        # Hide progress bar without affecting drop area
         self.progress_bar.hide()
-        self.drop_area.show()
         
         # Calculate minutes and seconds
         minutes = int(processing_time // 60)
@@ -358,6 +373,32 @@ class MainWindow(QMainWindow):
             f"• Jumlah file: {file_count} gambar\n"
             f"• Waktu proses: {time_str}"
         )
+        
+    def open_folder_dialog(self):
+        """Handles the Open Folder button click by opening a folder dialog"""
+        folder_path = QFileDialog.getExistingDirectory(
+            self,
+            "Pilih Folder Gambar",
+            os.path.expanduser("~"),
+            QFileDialog.ShowDirsOnly
+        )
+        
+        if folder_path:
+            # Start processing using the same method as for drag and drop
+            self.process_files([folder_path])
+            
+    def open_files_dialog(self):
+        """Handles the Open Files button click by opening a file dialog"""
+        file_paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Pilih Gambar",
+            os.path.expanduser("~"),
+            "Gambar (*.jpg *.jpeg *.png *.bmp *.webp)"
+        )
+        
+        if file_paths:
+            # Start processing using the same method as for drag and drop
+            self.process_files(file_paths)
 
 def main():
     app = QApplication(sys.argv)
