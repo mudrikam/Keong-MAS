@@ -24,6 +24,8 @@ import ctypes
 import rembg
 from PIL import Image
 from APP.helpers import model_manager
+from APP.helpers.config_manager import get_auto_crop_enabled, set_auto_crop_enabled, get_crop_threshold
+import json
 
 # Worker class to handle background removal in a separate thread
 class RemBgWorker(QObject):
@@ -206,12 +208,13 @@ class RemBgWorker(QObject):
                 
                 # Apply auto-cropping if enabled in settings
                 try:
-                    from APP.helpers.image_crop import get_auto_crop_setting, get_crop_threshold, crop_transparent_image
-                    if get_auto_crop_setting():
+                    from APP.helpers.image_crop import crop_transparent_image
+                    from APP.helpers.config_manager import get_auto_crop_enabled, get_crop_threshold
+                    
+                    auto_crop_enabled = get_auto_crop_enabled()
+                    if auto_crop_enabled:
                         self.progress.emit(90, f"Melakukan auto crop...", image_path)
-                        print(f"Auto crop enabled, cropping image...")
-                          # The path to use for cropping (use the enhanced path if available)
-                        image_to_crop = enhanced_path if enhanced_path else original_transparent_path
+                        print(f"Auto crop enabled (dari config.json), cropping image...")
                         
                         # Correctly determine the adjusted mask path
                         # First, check if we're already in a PNG folder
@@ -230,10 +233,11 @@ class RemBgWorker(QObject):
                         
                         print(f"Looking for adjusted mask at: {mask_to_use}")
                         threshold = get_crop_threshold()
+                        print(f"Using crop threshold: {threshold} (dari config.json)")
                         
                         # Apply cropping
                         cropped_path = crop_transparent_image(
-                            image_to_crop, 
+                            enhanced_path if enhanced_path else original_transparent_path, 
                             mask_to_use, 
                             output_path=None,  # Overwrite the input file
                             threshold=threshold
@@ -243,6 +247,8 @@ class RemBgWorker(QObject):
                             print(f"5. Auto-cropped image saved at: {cropped_path}")
                             # Update our reference to the final image path
                             enhanced_path = cropped_path
+                    else:
+                        print(f"Auto crop disabled (dari config.json), skipping crop step")
                 except Exception as crop_error:
                     print(f"Warning: Auto crop error: {str(crop_error)}")
                 
@@ -432,10 +438,20 @@ class MainWindow(QMainWindow):
         # Connect the checkbox for auto crop setting
         self.auto_crop_checkbox = self.ui.findChild(QCheckBox, "checkBox")
         if self.auto_crop_checkbox:
+            # Add tooltip to explain what the checkbox does
+            self.auto_crop_checkbox.setToolTip(
+                "Ketika diaktifkan, gambar akan otomatis dipotong untuk menghilangkan ruang kosong di sekitar objek.\n"
+                "Pengaturan ini disimpan dalam config.json."
+            )
+            
             # Load and set the initial checkbox state from config
-            from APP.helpers.image_crop import get_auto_crop_setting, update_auto_crop_setting
-            is_auto_crop_enabled = get_auto_crop_setting()
+            is_auto_crop_enabled = get_auto_crop_enabled()
+            print(f"Initial auto crop setting from config.json: {is_auto_crop_enabled}")
+            
+            # Block signals during initial setup to prevent triggering stateChanged
+            self.auto_crop_checkbox.blockSignals(True)
             self.auto_crop_checkbox.setChecked(is_auto_crop_enabled)
+            self.auto_crop_checkbox.blockSignals(False)
             
             # Connect checkbox state change to save configuration
             self.auto_crop_checkbox.stateChanged.connect(self.on_auto_crop_changed)
@@ -443,6 +459,28 @@ class MainWindow(QMainWindow):
         # Worker thread for processing
         self.worker = None
         self.thread = None
+
+        # Add a simple menu bar for configuration options
+        self.setup_menu()
+
+    def setup_menu(self):
+        """Set up the menu bar with configuration options"""
+        # Create config menu
+        config_menu = self.menuBar().addMenu("Config")
+        
+        # Add action to show configuration
+        show_config_action = config_menu.addAction("Show Current Config")
+        show_config_action.triggered.connect(self.show_config_info)
+        
+        # Add action to toggle auto crop
+        toggle_crop_action = config_menu.addAction("Toggle Auto Crop")
+        toggle_crop_action.triggered.connect(self.toggle_auto_crop)
+
+    def toggle_auto_crop(self):
+        """Toggle the auto crop setting"""
+        if hasattr(self, 'auto_crop_checkbox') and self.auto_crop_checkbox:
+            current_state = self.auto_crop_checkbox.isChecked()
+            self.auto_crop_checkbox.setChecked(not current_state)
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -625,21 +663,35 @@ class MainWindow(QMainWindow):
         # Calculate minutes and seconds
         minutes = int(processing_time // 60)
         seconds = int(processing_time % 60)
-          # Format time string in Indonesian
+        
+        # Format time string in Indonesian
         if minutes > 0:
             time_str = f"{minutes} menit {seconds} detik"
         else:
             time_str = f"{seconds} detik"
-          
+        
+        # Retrieve the success message setting from config
+        show_full_message = True
+        try:
+            # Load config file to check if we should show full message
+            config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
+            if os.path.exists(config_path):
+                with open(config_path, 'r') as f:
+                    config = json.loads(f.read())
+                    show_full_message = config.get("show_success_stats", True)
+        except Exception as e:
+            print(f"Error reading config for success message: {e}")
+        
         # Notify user with statistics in Indonesian
-        QMessageBox.information(
-            self, 
-            "Proses Selesai", 
-            f"Semua gambar telah diproses dan disimpan di folder PNG.\n\n"
-            f"Statistik Proses:\n"
-            f"• Jumlah file: {file_count} gambar\n"
-            f"• Waktu proses: {time_str}"
-        )
+        if show_full_message:
+            QMessageBox.information(
+                self, 
+                "Proses Selesai", 
+                f"Semua gambar telah diproses dan disimpan di folder PNG.\n\n"
+                f"Statistik Proses:\n"
+                f"• Jumlah file: {file_count} gambar\n"
+                f"• Waktu proses: {time_str}"
+            )
         
         # The preview will remain visible after processing, but we'll provide a way to start new processes
 
@@ -698,10 +750,73 @@ class MainWindow(QMainWindow):
 
     def on_auto_crop_changed(self, state):
         """Handles the Auto Crop Background checkbox state change"""
-        from APP.helpers.image_crop import update_auto_crop_setting
-        is_checked = state == Qt.Checked
-        update_auto_crop_setting(is_checked)
-        print(f"Auto crop setting {'enabled' if is_checked else 'disabled'}")
+        # In Qt, CheckState has these values:
+        # Qt.Unchecked = 0
+        # Qt.PartiallyChecked = 1 
+        # Qt.Checked = 2
+        is_checked = (state != 0)  # Consider anything not "Unchecked" as checked
+        
+        print(f"Checkbox state changed - Raw state: {state}, Interpreted as: {'checked' if is_checked else 'unchecked'}")
+        
+        try:
+            # Update the config file with the new setting
+            if set_auto_crop_enabled(is_checked):
+                print(f"Auto crop setting {'enabled' if is_checked else 'disabled'} and saved to config")
+                
+                # Show a brief notification that the setting was saved
+                self.statusBar().showMessage(f"Auto crop {'diaktifkan' if is_checked else 'dinonaktifkan'} dan disimpan", 3000)
+                
+                # Verify the setting was saved by reading it back
+                current = get_auto_crop_enabled()
+                print(f"Verified setting in config: {'enabled' if current else 'disabled'}")
+                
+                # Check if the values match
+                if current != is_checked:
+                    print(f"WARNING: Config value doesn't match expected value!")
+                    # Force checkbox to match config
+                    self.auto_crop_checkbox.blockSignals(True)
+                    self.auto_crop_checkbox.setChecked(current)
+                    self.auto_crop_checkbox.blockSignals(False)
+            else:
+                print(f"Failed to save auto crop setting to config")
+                
+                # If saving failed, revert the checkbox to match the current setting
+                current_setting = get_auto_crop_enabled()
+                if current_setting != is_checked:
+                    print(f"Reverting checkbox to match config: {current_setting}")
+                    self.auto_crop_checkbox.blockSignals(True)
+                    self.auto_crop_checkbox.setChecked(current_setting)
+                    self.auto_crop_checkbox.blockSignals(False)
+        except Exception as e:
+            print(f"Error in on_auto_crop_changed: {str(e)}")
+            import traceback
+            traceback.print_exc()
+
+    def show_config_info(self):
+        """Shows information about the current configuration"""
+        try:
+            # Get config path
+            config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
+            
+            # Load the configuration
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+            
+            # Format the information
+            crop_enabled = config.get('image_cropping', {}).get('enabled', False)
+            crop_threshold = config.get('image_cropping', {}).get('threshold', 10)
+            
+            message = (
+                f"Current Configuration:\n\n"
+                f"Auto Crop: {'Enabled' if crop_enabled else 'Disabled'}\n"
+                f"Crop Threshold: {crop_threshold}\n\n"
+                f"Config File: {config_path}"
+            )
+            
+            # Show the dialog
+            QMessageBox.information(self, "Configuration Information", message)
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to load configuration: {str(e)}")
 
     def on_stop_clicked(self):
         """Handle the Stop button click"""

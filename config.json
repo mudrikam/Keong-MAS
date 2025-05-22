@@ -14,7 +14,10 @@
         }
     },
     "image_cropping": {
-        "enable": true,
-        "crop_treshold": 10
+        "enabled": true,
+        "threshold": 10
+    },
+    "app": {
+        "show_success_stats": true
     }
 }

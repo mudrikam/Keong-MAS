@@ -178,3 +178,4 @@ cython_debug/
 vs-code-open.bat
 python
 onnxruntime_gpu.json
+tools/
