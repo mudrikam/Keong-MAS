@@ -2,8 +2,8 @@
     "image_processing": {
         "levels_adjustment": {
             "default": {
-                "black_point": 0,
-                "mid_point": 80,
+                "black_point": 10,
+                "mid_point": 100,
                 "white_point": 230
             },
             "recommended": {
@@ -11,18 +11,16 @@
                 "mid_point": 128,
                 "white_point": 235
             }
-        }
+        },
+        "unified_margin": 100
     },
     "image_cropping": {
         "enabled": true,
-        "detection_threshold": 5,
-        "margin": 10,
-        "threshold": 10
+        "detection_threshold": 5
     },
     "solid_background": {
         "enabled": true,
-        "color": "#8359FF",
-        "margin": 100
+        "color": "#3693A1"
     },
     "app": {
         "show_success_stats": true

@@ -26,10 +26,10 @@ import rembg
 from PIL import Image
 from APP.helpers import model_manager
 from APP.helpers.config_manager import (
-    get_auto_crop_enabled, set_auto_crop_enabled, get_crop_threshold,
+    get_auto_crop_enabled, set_auto_crop_enabled, 
     get_solid_bg_enabled, set_solid_bg_enabled,
     get_solid_bg_color, set_solid_bg_color,
-    get_solid_bg_margin, set_solid_bg_margin
+    get_unified_margin, set_unified_margin
 )
 import json
 
@@ -215,7 +215,7 @@ class RemBgWorker(QObject):
                 # Apply auto-cropping if enabled in settings
                 try:
                     from APP.helpers.image_crop import crop_transparent_image
-                    from APP.helpers.config_manager import get_auto_crop_enabled, get_crop_threshold
+                    from APP.helpers.config_manager import get_auto_crop_enabled, get_unified_margin
                     
                     auto_crop_enabled = get_auto_crop_enabled()
                     if auto_crop_enabled:
@@ -238,15 +238,17 @@ class RemBgWorker(QObject):
                         mask_to_use = os.path.join(png_dir, f'{file_name}_mask_adjusted.png')
                         
                         print(f"Looking for adjusted mask at: {mask_to_use}")
-                        threshold = get_crop_threshold()
-                        print(f"Using crop threshold: {threshold} (dari config.json)")
                         
-                        # Apply cropping
+                        # Get the unified margin value
+                        unified_margin = get_unified_margin()
+                        print(f"Using unified margin: {unified_margin}px (dari config.json)")
+                        
+                        # Apply cropping with explicit margin parameter
                         cropped_path = crop_transparent_image(
                             enhanced_path if enhanced_path else original_transparent_path, 
                             mask_to_use, 
                             output_path=None,  # Overwrite the input file
-                            threshold=threshold
+                            threshold=unified_margin  # Use unified margin value directly
                         )
                         
                         if cropped_path:
@@ -265,13 +267,18 @@ class RemBgWorker(QObject):
                     # Use the cropped image if available, otherwise use the enhanced image
                     image_to_use = enhanced_path if enhanced_path else original_transparent_path
                     
-                    # Add solid background
-                    solid_bg_path = add_solid_background(image_to_use)
+                    # Get unified margin directly from config
+                    unified_margin = get_unified_margin()
+                    
+                    # Add solid background with explicit margin parameter
+                    solid_bg_path = add_solid_background(image_to_use, margin=unified_margin)
                     
                     if solid_bg_path:
-                        print(f"6. Image with solid background saved at: {solid_bg_path}")
+                        print(f"6. Image with solid background saved at: {solid_bg_path} (margin: {unified_margin}px)")
                 except Exception as bg_error:
                     print(f"Warning: Solid background error: {str(bg_error)}")
+                    import traceback
+                    traceback.print_exc()
                 
                 model_info = f" (model: {model_name})" if 'model_name' in locals() else ""
                 print(f"Semua pemrosesan selesai{model_info}")
@@ -480,13 +487,12 @@ class MainWindow(QMainWindow):
         # Connect the solid background controls
         self.solid_bg_checkbox = self.ui.findChild(QCheckBox, "solidBgCheckBox")
         self.color_picker_button = self.ui.findChild(QPushButton, "colorPickerButton")
-        self.bg_margin_spinbox = self.ui.findChild(QSpinBox, "bgMarginSpinBox")
+        self.unified_margin_spinbox = self.ui.findChild(QSpinBox, "unifiedMarginSpinBox")
         
-        if self.solid_bg_checkbox and self.color_picker_button and self.bg_margin_spinbox:
+        if self.solid_bg_checkbox and self.color_picker_button:
             # Load initial values from config
             is_solid_bg_enabled = get_solid_bg_enabled()
             current_color = get_solid_bg_color()
-            current_margin = get_solid_bg_margin()
             
             # Set up tooltip
             self.solid_bg_checkbox.setToolTip(
@@ -499,20 +505,28 @@ class MainWindow(QMainWindow):
             self.solid_bg_checkbox.setChecked(is_solid_bg_enabled)
             self.solid_bg_checkbox.blockSignals(False)
             
-            self.bg_margin_spinbox.blockSignals(True)
-            self.bg_margin_spinbox.setValue(current_margin)
-            self.bg_margin_spinbox.blockSignals(False)
-            
             # Set the color button background color
             self.update_color_button(current_color)
             
             # Connect signals
             self.solid_bg_checkbox.stateChanged.connect(self.on_solid_bg_changed)
             self.color_picker_button.clicked.connect(self.on_color_picker_clicked)
-            self.bg_margin_spinbox.valueChanged.connect(self.on_bg_margin_changed)
             
             # Update control states based on checkbox
             self.update_solid_bg_controls()
+        
+        # Connect the unified margin control
+        if self.unified_margin_spinbox:
+            # Load initial value from config
+            current_margin = get_unified_margin()
+            
+            # Set the initial value
+            self.unified_margin_spinbox.blockSignals(True)
+            self.unified_margin_spinbox.setValue(current_margin)
+            self.unified_margin_spinbox.blockSignals(False)
+            
+            # Connect signal
+            self.unified_margin_spinbox.valueChanged.connect(self.on_unified_margin_changed)
         
         # Worker thread for processing
         self.worker = None
@@ -553,12 +567,6 @@ class MainWindow(QMainWindow):
             
             if hasattr(self, 'color_picker_button') and self.color_picker_button:
                 self.color_picker_button.setEnabled(is_enabled)
-                
-            if hasattr(self, 'bg_margin_spinbox') and self.bg_margin_spinbox:
-                self.bg_margin_spinbox.setEnabled(is_enabled)
-                
-            if hasattr(self, 'bg_margin_label') and self.bg_margin_label:
-                self.bg_margin_label.setEnabled(is_enabled)
     
     def on_solid_bg_changed(self, state):
         """Handle solid background checkbox state change"""
@@ -611,15 +619,17 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"Error setting background color: {str(e)}")
     
-    def on_bg_margin_changed(self, value):
-        """Handle background margin spinbox value change"""
+    def on_unified_margin_changed(self, value):
+        """Handle unified margin spinbox value change"""
         try:
             # Save the new margin value to config
-            if set_solid_bg_margin(value):
-                print(f"Background margin set to {value}px and saved to config")
-                self.statusBar().showMessage(f"Background margin set to {value}px", 3000)
+            if set_unified_margin(value):
+                print(f"Unified margin set to {value}px and saved to config")
+                self.statusBar().showMessage(f"Margin set to {value}px for all operations", 3000)
         except Exception as e:
-            print(f"Error setting background margin: {str(e)}")
+            print(f"Error setting unified margin: {str(e)}")
+            import traceback
+            traceback.print_exc()
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -944,21 +954,19 @@ class MainWindow(QMainWindow):
             # Format the information
             crop_enabled = config.get('image_cropping', {}).get('enabled', False)
             detection_threshold = config.get('image_cropping', {}).get('detection_threshold', 5)
-            crop_margin = config.get('image_cropping', {}).get('margin', 10)
+            unified_margin = config.get('image_processing', {}).get('unified_margin', 10)
             
             # Add solid background information
             solid_bg_enabled = config.get('solid_background', {}).get('enabled', False)
             solid_bg_color = config.get('solid_background', {}).get('color', '#FFFFFF')
-            solid_bg_margin = config.get('solid_background', {}).get('margin', 10)
             
             message = (
                 f"Current Configuration:\n\n"
+                f"Unified Margin: {unified_margin} pixels\n\n"
                 f"Auto Crop: {'Enabled' if crop_enabled else 'Disabled'}\n"
-                f"Detection Threshold: {detection_threshold} (0-255)\n"
-                f"Crop Margin: {crop_margin} pixels\n\n"
+                f"Detection Threshold: {detection_threshold} (0-255)\n\n"
                 f"Solid Background: {'Enabled' if solid_bg_enabled else 'Disabled'}\n"
-                f"Background Color: {solid_bg_color}\n"
-                f"Background Margin: {solid_bg_margin} pixels\n\n"
+                f"Background Color: {solid_bg_color}\n\n"
                 f"Config File: {config_path}"
             )
             

@@ -163,23 +163,31 @@ QFrame#drop_area_frame[dragActive=&quot;true&quot;] {
           </property>
          </widget>
         </item>
+       </layout>
+      </item>
+      <item>
+       <layout class="QHBoxLayout" name="unifiedMarginLayout">
         <item>
-         <widget class="QLabel" name="bgMarginLabel">
+         <widget class="QLabel" name="unifiedMarginLabel">
           <property name="text">
            <string>Margin:</string>
           </property>
          </widget>
         </item>
         <item>
-         <widget class="QSpinBox" name="bgMarginSpinBox">
+         <widget class="QSpinBox" name="unifiedMarginSpinBox">
           <property name="minimum">
            <number>0</number>
           </property>
           <property name="maximum">
-           <number>100</number>
+           <number>1000</number>
           </property>
           <property name="value">
            <number>10</number>
+          </property>
+          <property name="toolTip">
+           <string>Sets the margin used for cropping and solid backgrounds.
+Only applied where possible based on content.</string>
           </property>
          </widget>
         </item>

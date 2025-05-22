@@ -155,6 +155,10 @@ def add_solid_background(image_path, output_path=None, bg_color=None, margin=Non
         if margin is None:
             margin = get_solid_bg_margin()
             
+        # Explicitly get from config again to debug
+        config_margin = get_solid_bg_margin()
+        logger.info(f"Config margin value: {config_margin}, using margin: {margin}px")
+        
         # Log settings
         logger.info(f"Adding solid background to {os.path.basename(image_path)}")
         logger.info(f"Background color: {bg_color}, margin: {margin}px")

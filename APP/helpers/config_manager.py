@@ -24,17 +24,16 @@ DEFAULT_CONFIG = {
                 "mid_point": 128,
                 "white_point": 235
             }
-        }
+        },
+        "unified_margin": 10  # Unified margin setting for all operations
     },
     "image_cropping": {
         "enabled": False,
-        "detection_threshold": 5,  # Value 0-255 determining what is considered transparent
-        "margin": 10             # Margin in pixels to preserve around content
+        "detection_threshold": 5  # Value 0-255 determining what is considered transparent
     },
     "solid_background": {
         "enabled": False,
-        "color": "#FFFFFF",      # Default white background
-        "margin": 10             # Additional margin in pixels around the transparent image
+        "color": "#FFFFFF"  # Default white background
     },
     "app": {
         "show_success_stats": True
@@ -190,18 +189,26 @@ def set_crop_detection_threshold(threshold):
     """Set the detection threshold value for determining transparent areas"""
     return set_value('image_cropping.detection_threshold', int(threshold))
 
+# Unified margin setting
+def get_unified_margin():
+    """Get the unified margin value used for all operations"""
+    margin = get_value('image_processing.unified_margin', 10)
+    logger.info(f"Retrieving unified margin: {margin}px")
+    return margin
+
+def set_unified_margin(margin):
+    """Set the unified margin value"""
+    logger.info(f"Setting unified margin to {margin}px")
+    return set_value('image_processing.unified_margin', int(margin))
+
+# For backwards compatibility
 def get_crop_margin():
-    """Get the margin in pixels to preserve around content when cropping"""
-    return get_value('image_cropping.margin', 10)
+    """Get the margin for cropping (using unified margin)"""
+    return get_unified_margin()
 
 def set_crop_margin(margin):
-    """Set the margin in pixels to preserve around content when cropping"""
-    return set_value('image_cropping.margin', int(margin))
-
-# Backward compatibility - now returns the margin value
-def get_crop_threshold():
-    """Get the threshold value for cropping (for backward compatibility)"""
-    return get_crop_margin()
+    """Set the margin for cropping (using unified margin)"""
+    return set_unified_margin(margin)
 
 # Solid background settings functions
 def get_solid_bg_enabled():
@@ -239,9 +246,16 @@ def set_solid_bg_color(color_hex):
     return set_value('solid_background.color', color_hex)
 
 def get_solid_bg_margin():
-    """Get the solid background margin"""
-    return get_value('solid_background.margin', 10)
+    """Get the margin for solid backgrounds (using unified margin)"""
+    return get_unified_margin()
 
 def set_solid_bg_margin(margin):
-    """Set the solid background margin"""
-    return set_value('solid_background.margin', int(margin))
+    """Set the margin for solid backgrounds (using unified margin)"""
+    return set_unified_margin(margin)
+
+# Backward compatibility - now returns the unified margin value
+def get_crop_threshold():
+    """Get the threshold value for cropping (for backward compatibility)"""
+    margin = get_unified_margin()
+    logger.info(f"get_crop_threshold called, returning unified margin: {margin}px")
+    return margin

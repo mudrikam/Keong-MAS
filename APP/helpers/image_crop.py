@@ -10,7 +10,7 @@ from PIL import Image
 from APP.helpers.config_manager import (
     get_auto_crop_enabled, 
     get_crop_detection_threshold,
-    get_crop_margin
+    get_unified_margin  # Change this to use unified margin
 )
 
 # Setup basic logging
@@ -35,8 +35,8 @@ def get_crop_bounds(mask_image, detection_threshold=None, margin=None):
         logger.info(f"Using detection threshold {detection_threshold} from config")
     
     if margin is None:
-        margin = get_crop_margin()
-        logger.info(f"Using margin of {margin}px from config")
+        margin = get_unified_margin()  # Use unified margin instead
+        logger.info(f"Using unified margin of {margin}px from config")
     
     # Ensure mask is in grayscale mode
     mask = mask_image.convert("L")
@@ -162,7 +162,9 @@ def crop_transparent_image(image_path, mask_path, output_path=None, threshold=No
     try:
         # Get detection threshold and margin from config
         detection_threshold = get_crop_detection_threshold()
-        margin = get_crop_margin() if threshold is None else threshold
+        
+        # Always use unified margin unless explicitly overridden by threshold parameter
+        margin = get_unified_margin() if threshold is None else threshold
         
         logger.info(f"Cropping image: {os.path.basename(image_path)}")
         logger.info(f"Detection threshold: {detection_threshold}, Margin: {margin}px")
