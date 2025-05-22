@@ -31,6 +31,11 @@ DEFAULT_CONFIG = {
         "detection_threshold": 5,  # Value 0-255 determining what is considered transparent
         "margin": 10             # Margin in pixels to preserve around content
     },
+    "solid_background": {
+        "enabled": False,
+        "color": "#FFFFFF",      # Default white background
+        "margin": 10             # Additional margin in pixels around the transparent image
+    },
     "app": {
         "show_success_stats": True
     }
@@ -197,3 +202,46 @@ def set_crop_margin(margin):
 def get_crop_threshold():
     """Get the threshold value for cropping (for backward compatibility)"""
     return get_crop_margin()
+
+# Solid background settings functions
+def get_solid_bg_enabled():
+    """Get whether solid background generation is enabled"""
+    return get_value('solid_background.enabled', False)
+
+def set_solid_bg_enabled(enabled):
+    """Set whether solid background generation is enabled"""
+    # Convert to boolean and ensure it's a new value
+    enabled_bool = bool(enabled)
+    current = get_solid_bg_enabled()
+    
+    # Only save if the value is different
+    if current == enabled_bool:
+        logger.info(f"Solid background setting unchanged (already {'enabled' if enabled_bool else 'disabled'})")
+        return True
+        
+    result = set_value('solid_background.enabled', enabled_bool)
+    logger.info(f"Solid background {'enabled' if enabled_bool else 'disabled'} (saved: {result})")
+    return result
+
+def get_solid_bg_color():
+    """Get the solid background color"""
+    return get_value('solid_background.color', '#FFFFFF')
+
+def set_solid_bg_color(color_hex):
+    """Set the solid background color"""
+    # Ensure color is in proper hex format
+    if not color_hex.startswith('#'):
+        color_hex = f'#{color_hex}'
+    
+    # Convert to uppercase for consistency
+    color_hex = color_hex.upper()
+    
+    return set_value('solid_background.color', color_hex)
+
+def get_solid_bg_margin():
+    """Get the solid background margin"""
+    return get_value('solid_background.margin', 10)
+
+def set_solid_bg_margin(margin):
+    """Set the solid background margin"""
+    return set_value('solid_background.margin', int(margin))

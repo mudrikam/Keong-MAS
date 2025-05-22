@@ -10,11 +10,12 @@ if current_dir not in sys.path:
     sys.path.append(current_dir)
 
 from PySide6.QtCore import Qt, QUrl, QSize, Signal, QThread, QObject, QRectF, QTimer
-from PySide6.QtGui import QIcon, QGuiApplication, QImage, QPixmap, QPainter, QPainterPath
+from PySide6.QtGui import QIcon, QGuiApplication, QImage, QPixmap, QPainter, QPainterPath, QColor
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QLabel, 
     QProgressBar, QMessageBox, QFrame, QWidget,
-    QFileDialog, QPushButton, QCheckBox, QSizePolicy
+    QFileDialog, QPushButton, QCheckBox, QSizePolicy,
+    QColorDialog, QSpinBox
 )
 from PySide6.QtUiTools import QUiLoader
 
@@ -24,7 +25,12 @@ import ctypes
 import rembg
 from PIL import Image
 from APP.helpers import model_manager
-from APP.helpers.config_manager import get_auto_crop_enabled, set_auto_crop_enabled, get_crop_threshold
+from APP.helpers.config_manager import (
+    get_auto_crop_enabled, set_auto_crop_enabled, get_crop_threshold,
+    get_solid_bg_enabled, set_solid_bg_enabled,
+    get_solid_bg_color, set_solid_bg_color,
+    get_solid_bg_margin, set_solid_bg_margin
+)
 import json
 
 # Worker class to handle background removal in a separate thread
@@ -252,6 +258,21 @@ class RemBgWorker(QObject):
                 except Exception as crop_error:
                     print(f"Warning: Auto crop error: {str(crop_error)}")
                 
+                # After processing auto crop, add solid background if enabled
+                try:
+                    from APP.helpers.solid_background import add_solid_background
+                    
+                    # Use the cropped image if available, otherwise use the enhanced image
+                    image_to_use = enhanced_path if enhanced_path else original_transparent_path
+                    
+                    # Add solid background
+                    solid_bg_path = add_solid_background(image_to_use)
+                    
+                    if solid_bg_path:
+                        print(f"6. Image with solid background saved at: {solid_bg_path}")
+                except Exception as bg_error:
+                    print(f"Warning: Solid background error: {str(bg_error)}")
+                
                 model_info = f" (model: {model_name})" if 'model_name' in locals() else ""
                 print(f"Semua pemrosesan selesai{model_info}")
                 self.file_completed.emit(enhanced_path if enhanced_path else original_transparent_path)
@@ -456,6 +477,43 @@ class MainWindow(QMainWindow):
             # Connect checkbox state change to save configuration
             self.auto_crop_checkbox.stateChanged.connect(self.on_auto_crop_changed)
         
+        # Connect the solid background controls
+        self.solid_bg_checkbox = self.ui.findChild(QCheckBox, "solidBgCheckBox")
+        self.color_picker_button = self.ui.findChild(QPushButton, "colorPickerButton")
+        self.bg_margin_spinbox = self.ui.findChild(QSpinBox, "bgMarginSpinBox")
+        
+        if self.solid_bg_checkbox and self.color_picker_button and self.bg_margin_spinbox:
+            # Load initial values from config
+            is_solid_bg_enabled = get_solid_bg_enabled()
+            current_color = get_solid_bg_color()
+            current_margin = get_solid_bg_margin()
+            
+            # Set up tooltip
+            self.solid_bg_checkbox.setToolTip(
+                "Ketika diaktifkan, gambar transparant akan dibuatkan versi dengan latar belakang solid.\n"
+                "Pengaturan ini disimpan dalam config.json."
+            )
+            
+            # Set initial control states
+            self.solid_bg_checkbox.blockSignals(True)
+            self.solid_bg_checkbox.setChecked(is_solid_bg_enabled)
+            self.solid_bg_checkbox.blockSignals(False)
+            
+            self.bg_margin_spinbox.blockSignals(True)
+            self.bg_margin_spinbox.setValue(current_margin)
+            self.bg_margin_spinbox.blockSignals(False)
+            
+            # Set the color button background color
+            self.update_color_button(current_color)
+            
+            # Connect signals
+            self.solid_bg_checkbox.stateChanged.connect(self.on_solid_bg_changed)
+            self.color_picker_button.clicked.connect(self.on_color_picker_clicked)
+            self.bg_margin_spinbox.valueChanged.connect(self.on_bg_margin_changed)
+            
+            # Update control states based on checkbox
+            self.update_solid_bg_controls()
+        
         # Worker thread for processing
         self.worker = None
         self.thread = None
@@ -481,6 +539,87 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'auto_crop_checkbox') and self.auto_crop_checkbox:
             current_state = self.auto_crop_checkbox.isChecked()
             self.auto_crop_checkbox.setChecked(not current_state)
+
+    def update_color_button(self, color_hex):
+        """Update the color button background to match the selected color"""
+        if self.color_picker_button:
+            style = f"background-color: {color_hex}; border: 1px solid #888;"
+            self.color_picker_button.setStyleSheet(style)
+    
+    def update_solid_bg_controls(self):
+        """Update the enabled state of solid background controls"""
+        if hasattr(self, 'solid_bg_checkbox') and self.solid_bg_checkbox:
+            is_enabled = self.solid_bg_checkbox.isChecked()
+            
+            if hasattr(self, 'color_picker_button') and self.color_picker_button:
+                self.color_picker_button.setEnabled(is_enabled)
+                
+            if hasattr(self, 'bg_margin_spinbox') and self.bg_margin_spinbox:
+                self.bg_margin_spinbox.setEnabled(is_enabled)
+                
+            if hasattr(self, 'bg_margin_label') and self.bg_margin_label:
+                self.bg_margin_label.setEnabled(is_enabled)
+    
+    def on_solid_bg_changed(self, state):
+        """Handle solid background checkbox state change"""
+        is_checked = (state != 0)  # Consider anything not "Unchecked" as checked
+        
+        print(f"Solid background checkbox changed - Raw state: {state}, Interpreted as: {'checked' if is_checked else 'unchecked'}")
+        
+        try:
+            # Update the config
+            if set_solid_bg_enabled(is_checked):
+                print(f"Solid background {'enabled' if is_checked else 'disabled'} and saved to config")
+                self.statusBar().showMessage(f"Solid background {'diaktifkan' if is_checked else 'dinonaktifkan'} dan disimpan", 3000)
+                
+                # Update control states
+                self.update_solid_bg_controls()
+                
+                # Verify setting
+                current = get_solid_bg_enabled()
+                if current != is_checked:
+                    print(f"WARNING: Config value doesn't match expected value!")
+                    self.solid_bg_checkbox.blockSignals(True)
+                    self.solid_bg_checkbox.setChecked(current)
+                    self.solid_bg_checkbox.blockSignals(False)
+                    self.update_solid_bg_controls()
+        except Exception as e:
+            print(f"Error updating solid background setting: {str(e)}")
+    
+    def on_color_picker_clicked(self):
+        """Open color picker dialog when the color button is clicked"""
+        try:
+            # Get current color from config
+            current_color = get_solid_bg_color()
+            initial_color = QColor(current_color)
+            
+            # Open color dialog
+            color = QColorDialog.getColor(initial_color, self, "Select Background Color")
+            
+            # If a valid color was selected
+            if color.isValid():
+                # Convert to hex format
+                color_hex = color.name().upper()
+                
+                # Save to config
+                if set_solid_bg_color(color_hex):
+                    print(f"Background color set to {color_hex} and saved to config")
+                    self.statusBar().showMessage(f"Background color set to {color_hex}", 3000)
+                    
+                    # Update button appearance
+                    self.update_color_button(color_hex)
+        except Exception as e:
+            print(f"Error setting background color: {str(e)}")
+    
+    def on_bg_margin_changed(self, value):
+        """Handle background margin spinbox value change"""
+        try:
+            # Save the new margin value to config
+            if set_solid_bg_margin(value):
+                print(f"Background margin set to {value}px and saved to config")
+                self.statusBar().showMessage(f"Background margin set to {value}px", 3000)
+        except Exception as e:
+            print(f"Error setting background margin: {str(e)}")
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -807,11 +946,19 @@ class MainWindow(QMainWindow):
             detection_threshold = config.get('image_cropping', {}).get('detection_threshold', 5)
             crop_margin = config.get('image_cropping', {}).get('margin', 10)
             
+            # Add solid background information
+            solid_bg_enabled = config.get('solid_background', {}).get('enabled', False)
+            solid_bg_color = config.get('solid_background', {}).get('color', '#FFFFFF')
+            solid_bg_margin = config.get('solid_background', {}).get('margin', 10)
+            
             message = (
                 f"Current Configuration:\n\n"
                 f"Auto Crop: {'Enabled' if crop_enabled else 'Disabled'}\n"
                 f"Detection Threshold: {detection_threshold} (0-255)\n"
                 f"Crop Margin: {crop_margin} pixels\n\n"
+                f"Solid Background: {'Enabled' if solid_bg_enabled else 'Disabled'}\n"
+                f"Background Color: {solid_bg_color}\n"
+                f"Background Margin: {solid_bg_margin} pixels\n\n"
                 f"Config File: {config_path}"
             )
             

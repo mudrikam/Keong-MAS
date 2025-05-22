@@ -15,9 +15,14 @@
     },
     "image_cropping": {
         "enabled": true,
-        "threshold": 10,
         "detection_threshold": 5,
-        "margin": 5
+        "margin": 10,
+        "threshold": 10
+    },
+    "solid_background": {
+        "enabled": true,
+        "color": "#8359FF",
+        "margin": 100
     },
     "app": {
         "show_success_stats": true
