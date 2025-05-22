@@ -7,27 +7,36 @@ import logging
 import numpy as np
 from PIL import Image
 
-from APP.helpers.config_manager import get_auto_crop_enabled, get_crop_threshold
+from APP.helpers.config_manager import (
+    get_auto_crop_enabled, 
+    get_crop_detection_threshold,
+    get_crop_margin
+)
 
 # Setup basic logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("ImageCrop")
 
-def get_crop_bounds(mask_image, threshold=None):
+def get_crop_bounds(mask_image, detection_threshold=None, margin=None):
     """
     Analyzes a mask to find crop boundaries.
-    Areas with alpha/grayscale value less than the threshold are considered "empty".
     
     Args:
         mask_image (PIL.Image): The mask image (grayscale)
-        threshold (int): Pixel values below this threshold are considered transparent/empty
+        detection_threshold (int): Pixel values below this threshold are considered transparent (0-255)
+        margin (int): Margin in pixels to preserve around detected content
                         
     Returns:
         tuple: (left, top, right, bottom) crop coordinates, or None if no crop needed
     """
-    # Use configured threshold if none provided
-    if threshold is None:
-        threshold = get_crop_threshold()
+    # Use configured values if none provided
+    if detection_threshold is None:
+        detection_threshold = get_crop_detection_threshold()
+        logger.info(f"Using detection threshold {detection_threshold} from config")
+    
+    if margin is None:
+        margin = get_crop_margin()
+        logger.info(f"Using margin of {margin}px from config")
     
     # Ensure mask is in grayscale mode
     mask = mask_image.convert("L")
@@ -40,31 +49,33 @@ def get_crop_bounds(mask_image, threshold=None):
     logger.info(f"Original mask size: {width}x{height}")
     
     # Find the boundaries where the mask is not fully transparent
+    # Using the detection threshold to find content edges
+    
     # Find leftmost non-empty column
     left = 0
     while left < width:
-        if np.max(mask_array[:, left]) > threshold:
+        if np.max(mask_array[:, left]) > detection_threshold:
             break
         left += 1
     
     # Find rightmost non-empty column
     right = width - 1
     while right >= 0:
-        if np.max(mask_array[:, right]) > threshold:
+        if np.max(mask_array[:, right]) > detection_threshold:
             break
         right -= 1
     
     # Find topmost non-empty row
     top = 0
     while top < height:
-        if np.max(mask_array[top, :]) > threshold:
+        if np.max(mask_array[top, :]) > detection_threshold:
             break
         top += 1
     
     # Find bottommost non-empty row
     bottom = height - 1
     while bottom >= 0:
-        if np.max(mask_array[bottom, :]) > threshold:
+        if np.max(mask_array[bottom, :]) > detection_threshold:
             break
         bottom -= 1
     
@@ -72,10 +83,12 @@ def get_crop_bounds(mask_image, threshold=None):
     if left >= right or top >= bottom:
         logger.info("No significant crop possible - entire image is empty or crop area too small")
         return None
-    
-    # Add 1 to right and bottom to make them inclusive (PIL crop takes exclusive coordinates)
-    right += 1
-    bottom += 1
+        
+    # Apply the margin, ensuring we don't go out of bounds
+    left = max(0, left - margin)
+    top = max(0, top - margin)
+    right = min(width, right + 1 + margin)  # Add 1 because PIL's crop is exclusive on right/bottom
+    bottom = min(height, bottom + 1 + margin)
     
     # Calculate how much we're cropping
     crop_width = right - left
@@ -85,6 +98,7 @@ def get_crop_bounds(mask_image, threshold=None):
     width_percent = (width_reduction / width) * 100
     height_percent = (height_reduction / height) * 100
     
+    logger.info(f"Detection threshold: {detection_threshold}, Margin: {margin}px")
     logger.info(f"Crop bounds: left={left}, top={top}, right={right}, bottom={bottom}")
     logger.info(f"Original: {width}x{height}, Cropped: {crop_width}x{crop_height}")
     logger.info(f"Reduced by: {width_reduction}px ({width_percent:.1f}%) width, {height_reduction}px ({height_percent:.1f}%) height")
@@ -140,20 +154,18 @@ def crop_transparent_image(image_path, mask_path, output_path=None, threshold=No
         image_path (str): Path to the transparent image
         mask_path (str): Path to the mask image
         output_path (str, optional): Path to save the cropped image. If None, overwrites the input
-        threshold (int, optional): Pixel values below this are considered transparent
+        threshold (int, optional): For backward compatibility - used as margin if provided
                         
     Returns:
         str: Path to the cropped image, or original image path if cropping failed
     """
     try:
-        # Get threshold from config if not specified
-        if threshold is None:
-            threshold = get_crop_threshold()
-            logger.info(f"Using threshold {threshold} from config.json")
-        else:
-            logger.info(f"Using provided threshold {threshold}")
-            
-        logger.info(f"Cropping image: {os.path.basename(image_path)} (threshold: {threshold})")
+        # Get detection threshold and margin from config
+        detection_threshold = get_crop_detection_threshold()
+        margin = get_crop_margin() if threshold is None else threshold
+        
+        logger.info(f"Cropping image: {os.path.basename(image_path)}")
+        logger.info(f"Detection threshold: {detection_threshold}, Margin: {margin}px")
         
         # Check if auto crop is enabled in config
         auto_crop_enabled = get_auto_crop_enabled()
@@ -174,7 +186,7 @@ def crop_transparent_image(image_path, mask_path, output_path=None, threshold=No
         mask = Image.open(actual_mask_path)
         
         # Get crop bounds
-        bounds = get_crop_bounds(mask, threshold)
+        bounds = get_crop_bounds(mask, detection_threshold=detection_threshold, margin=margin)
         
         if not bounds:
             logger.info(f"No cropping necessary for {os.path.basename(image_path)}")

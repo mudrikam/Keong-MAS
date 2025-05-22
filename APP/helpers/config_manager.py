@@ -28,7 +28,8 @@ DEFAULT_CONFIG = {
     },
     "image_cropping": {
         "enabled": False,
-        "threshold": 10
+        "detection_threshold": 5,  # Value 0-255 determining what is considered transparent
+        "margin": 10             # Margin in pixels to preserve around content
     },
     "app": {
         "show_success_stats": True
@@ -176,10 +177,23 @@ def set_auto_crop_enabled(enabled):
     logger.info(f"Auto crop {'enabled' if enabled_bool else 'disabled'} (saved: {result})")
     return result
 
-def get_crop_threshold():
-    """Get the threshold value for cropping"""
-    return get_value('image_cropping.threshold', 10)
+def get_crop_detection_threshold():
+    """Get the detection threshold value (0-255) for determining transparent areas"""
+    return get_value('image_cropping.detection_threshold', 5)
 
-def set_crop_threshold(threshold):
-    """Set the threshold value for cropping"""
-    return set_value('image_cropping.threshold', int(threshold))
+def set_crop_detection_threshold(threshold):
+    """Set the detection threshold value for determining transparent areas"""
+    return set_value('image_cropping.detection_threshold', int(threshold))
+
+def get_crop_margin():
+    """Get the margin in pixels to preserve around content when cropping"""
+    return get_value('image_cropping.margin', 10)
+
+def set_crop_margin(margin):
+    """Set the margin in pixels to preserve around content when cropping"""
+    return set_value('image_cropping.margin', int(margin))
+
+# Backward compatibility - now returns the margin value
+def get_crop_threshold():
+    """Get the threshold value for cropping (for backward compatibility)"""
+    return get_crop_margin()

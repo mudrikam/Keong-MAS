@@ -804,12 +804,14 @@ class MainWindow(QMainWindow):
             
             # Format the information
             crop_enabled = config.get('image_cropping', {}).get('enabled', False)
-            crop_threshold = config.get('image_cropping', {}).get('threshold', 10)
+            detection_threshold = config.get('image_cropping', {}).get('detection_threshold', 5)
+            crop_margin = config.get('image_cropping', {}).get('margin', 10)
             
             message = (
                 f"Current Configuration:\n\n"
                 f"Auto Crop: {'Enabled' if crop_enabled else 'Disabled'}\n"
-                f"Crop Threshold: {crop_threshold}\n\n"
+                f"Detection Threshold: {detection_threshold} (0-255)\n"
+                f"Crop Margin: {crop_margin} pixels\n\n"
                 f"Config File: {config_path}"
             )
             
