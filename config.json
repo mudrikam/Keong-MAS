@@ -12,5 +12,9 @@
                 "white_point": 235
             }
         }
+    },
+    "image_cropping": {
+        "enable": true,
+        "crop_treshold": 10
     }
 }
