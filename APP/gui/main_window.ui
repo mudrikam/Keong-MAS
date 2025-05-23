@@ -227,6 +227,13 @@ Only applied where possible based on content.</string>
         </property>
        </widget>
       </item>
+      <item>
+       <widget class="QPushButton" name="whatsappButton">
+        <property name="text">
+         <string>WhatsApp</string>
+        </property>
+       </widget>
+      </item>
      </layout>
     </item>
    </layout>

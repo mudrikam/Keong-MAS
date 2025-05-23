@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QColorDialog, QSpinBox
 )
 from PySide6.QtUiTools import QUiLoader
+import qtawesome as qta
 
 # Import for Windows taskbar icon
 import ctypes
@@ -409,6 +410,9 @@ class MainWindow(QMainWindow):
         self.centralWidget().setLayout(QVBoxLayout())
         self.centralWidget().layout().addWidget(self.ui)
         
+        # Set icons on buttons using QtAwesome
+        self.setup_button_icons()
+        
         # Access the drop area frame
         self.drop_area = self.ui.findChild(QFrame, "drop_area_frame")
         self.drop_area.setAcceptDrops(False)  # We'll handle drops at the main window level
@@ -538,6 +542,62 @@ class MainWindow(QMainWindow):
         # Worker thread for processing
         self.worker = None
         self.thread = None
+
+    def setup_button_icons(self):
+        """Setup icons for all buttons using QtAwesome"""
+        # Find all required buttons
+        self.open_folder_btn = self.ui.findChild(QPushButton, "openFolder")
+        self.open_files_btn = self.ui.findChild(QPushButton, "openFiles")
+        self.stop_button = self.ui.findChild(QPushButton, "stopButton")
+        self.color_picker_button = self.ui.findChild(QPushButton, "colorPickerButton")
+        self.whatsapp_button = self.ui.findChild(QPushButton, "whatsappButton")
+        
+        # Set icons with proper sizing
+        if self.open_folder_btn:
+            folder_icon = qta.icon('fa5s.folder-open')
+            self.open_folder_btn.setIcon(folder_icon)
+            self.open_folder_btn.setIconSize(QSize(16, 16))
+            self.open_folder_btn.clicked.connect(self.open_folder_dialog)
+        
+        if self.open_files_btn:
+            files_icon = qta.icon('fa5s.file-image')
+            self.open_files_btn.setIcon(files_icon)
+            self.open_files_btn.setIconSize(QSize(16, 16))
+            self.open_files_btn.clicked.connect(self.open_files_dialog)
+        
+        if self.stop_button:
+            stop_icon = qta.icon('fa5s.stop')
+            self.stop_button.setIcon(stop_icon)
+            self.stop_button.setIconSize(QSize(16, 16))
+            self.stop_button.setEnabled(False)
+            self.stop_button.setStyleSheet("""
+                QPushButton:enabled { background-color: #e74c3c; }
+            """)
+            self.stop_button.clicked.connect(self.on_stop_clicked)
+        
+        if self.color_picker_button:
+            # Set the eyedropper icon to black for better visibility on light backgrounds
+            eyedropper_icon = qta.icon('fa5s.eye-dropper', color='black')
+            self.color_picker_button.setIcon(eyedropper_icon)
+            self.color_picker_button.setIconSize(QSize(16, 16))
+        
+        if self.whatsapp_button:
+            whatsapp_icon = qta.icon('fa5b.whatsapp', color='#25D366')
+            self.whatsapp_button.setIcon(whatsapp_icon)
+            self.whatsapp_button.setIconSize(QSize(16, 16))
+            self.whatsapp_button.clicked.connect(self.open_whatsapp)
+    
+    def open_whatsapp(self):
+        """Open WhatsApp with the provided group link"""
+        try:
+            # Use the provided WhatsApp group link
+            whatsapp_url = "https://chat.whatsapp.com/CMQvDxpCfP647kBBA6dRn3"
+            
+            # Use QUrl to open the URL in the default browser
+            from PySide6.QtGui import QDesktopServices
+            QDesktopServices.openUrl(QUrl(whatsapp_url))
+        except Exception as e:
+            print(f"Error opening WhatsApp: {str(e)}")
 
     def update_color_button(self, color_hex):
         """Update the color button background to match the selected color"""
