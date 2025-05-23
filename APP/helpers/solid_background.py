@@ -240,7 +240,14 @@ def add_solid_background(image_path, output_path=None, bg_color=None, margin=Non
         
         # Get pure file name without any suffixes
         if "_transparent" in file_name:
+            # Extract timestamp ID if present
+            import re
+            timestamp_match = re.search(r'_transparent_(\d+)', file_name)
+            timestamp_id = timestamp_match.group(1) if timestamp_match else None
             file_name = file_name.replace("_transparent", "")
+            # Remove timestamp if present
+            if timestamp_id:
+                file_name = file_name.replace(f"_{timestamp_id}", "")
         
         # Determine PNG directory
         if os.path.basename(base_dir).upper() == 'PNG':
@@ -248,8 +255,33 @@ def add_solid_background(image_path, output_path=None, bg_color=None, margin=Non
         else:
             png_dir = os.path.join(base_dir, 'PNG')
         
+        # Create timestamp-based identifier to prevent overwriting previous outputs
+        import time
+        timestamp_id = int(time.time()) % 10000  # Use last 4 digits of timestamp
+        
+        # Try to extract timestamp ID from input file if it exists
+        if "_transparent_" in image_path:
+            import re
+            match = re.search(r'_transparent_(\d+)', image_path)
+            if match:
+                timestamp_id = match.group(1)
+        
         # Always use the _transparent.png file from the PNG directory
-        transparent_img_path = os.path.join(png_dir, f"{file_name}_transparent.png")
+        transparent_img_path = os.path.join(png_dir, f"{file_name}_transparent_{timestamp_id}.png")
+        
+        # If exact match with timestamp doesn't exist, try to find any transparent file for this image
+        if not os.path.exists(transparent_img_path):
+            # Try without the timestamp ID
+            basic_transparent_path = os.path.join(png_dir, f"{file_name}_transparent.png")
+            if os.path.exists(basic_transparent_path):
+                transparent_img_path = basic_transparent_path
+            else:
+                # Try to find any transparent file with this base name
+                import glob
+                pattern = os.path.join(png_dir, f"{file_name}_transparent_*.png")
+                matches = glob.glob(pattern)
+                if matches:
+                    transparent_img_path = matches[0]  # Use the first match
         
         # Check if the transparent image exists
         if not os.path.exists(transparent_img_path):
@@ -267,7 +299,7 @@ def add_solid_background(image_path, output_path=None, bg_color=None, margin=Non
         
         # Create output path if not provided
         if output_path is None:
-            output_path = os.path.join(png_dir, f"{file_name}_solid_background.png")
+            output_path = os.path.join(png_dir, f"{file_name}_solid_background_{timestamp_id}.png")
         
         # Open the transparent image
         orig_img = Image.open(transparent_img_path).convert("RGBA")

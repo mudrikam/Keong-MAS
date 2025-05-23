@@ -444,6 +444,10 @@ def enhance_transparency_with_levels(image_path, mask_path, output_suffix="_tran
                 white_point=white_point
             )
         
+        # Create a timestamp-based identifier to prevent overwriting previous outputs
+        import time
+        timestamp_id = int(time.time()) % 10000  # Use last 4 digits of timestamp
+        
         # Setup output paths properly to avoid nested PNG folders
         base_dir = os.path.dirname(image_path)
         file_name = os.path.splitext(os.path.basename(image_path))[0]
@@ -457,9 +461,9 @@ def enhance_transparency_with_levels(image_path, mask_path, output_suffix="_tran
             png_dir = os.path.join(base_dir, 'PNG')
             os.makedirs(png_dir, exist_ok=True)
         
-        # Create paths for both files in the PNG directory
-        adjusted_mask_path = os.path.join(png_dir, f"{file_name}_mask_adjusted.png")
-        output_path = os.path.join(png_dir, f"{file_name}{output_suffix}.png")
+        # Create paths for both files in the PNG directory with timestamp
+        adjusted_mask_path = os.path.join(png_dir, f"{file_name}_mask_adjusted_{timestamp_id}.png")
+        output_path = os.path.join(png_dir, f"{file_name}{output_suffix}_{timestamp_id}.png")
         
         # Save adjusted mask if requested - ensure it gets saved to PNG folder
         if save_adjusted_mask:

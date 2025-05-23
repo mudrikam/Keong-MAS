@@ -4,6 +4,8 @@ Provides functions to convert PNG images with solid backgrounds to JPG format.
 """
 import os
 import logging
+import time
+import re
 from PIL import Image
 
 from APP.helpers.config_manager import get_jpg_export_enabled, get_jpg_quality, get_solid_bg_enabled
@@ -41,11 +43,26 @@ def convert_to_jpg(image_path, output_path=None, quality=None):
         base_dir = os.path.dirname(image_path)
         file_name = os.path.splitext(os.path.basename(image_path))[0]
         
+        # Create timestamp-based identifier to prevent overwriting previous outputs
+        timestamp_id = int(time.time()) % 10000  # Use last 4 digits of timestamp
+        
+        # Try to extract timestamp ID from input file if it exists
+        if "_transparent_" in image_path or "_solid_background_" in image_path:
+            match = re.search(r'_(transparent|solid_background)_(\d+)', image_path)
+            if match:
+                timestamp_id = match.group(2)
+        
         # Remove any suffixes from the filename to get the original name
         if "_solid_background" in file_name:
             file_name = file_name.replace("_solid_background", "")
+            # Remove timestamp if present
+            if "_" in file_name and file_name.split("_")[-1].isdigit():
+                file_name = "_".join(file_name.split("_")[:-1])
         elif "_transparent" in file_name:
             file_name = file_name.replace("_transparent", "")
+            # Remove timestamp if present
+            if "_" in file_name and file_name.split("_")[-1].isdigit():
+                file_name = "_".join(file_name.split("_")[:-1])
         
         # Determine PNG directory and prepare JPG directory
         original_dir = base_dir
@@ -93,7 +110,7 @@ def convert_to_jpg(image_path, output_path=None, quality=None):
         
         # Create output path in JPG directory if not provided
         if output_path is None:
-            output_path = os.path.join(jpg_dir, f"{file_name}.jpg")
+            output_path = os.path.join(jpg_dir, f"{file_name}_{timestamp_id}.jpg")
         
         # Open the input image 
         img = Image.open(input_path)

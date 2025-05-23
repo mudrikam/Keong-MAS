@@ -258,6 +258,10 @@ class RemBgWorker(QObject):
                     self.progress.emit(65, f"Menghasilkan mask yang diatur levels-nya...", image_path)
                     print(f"Langkah 1: Menerapkan levels adjustment pada mask...")
                     
+                    # Get current timestamp for unique filenames
+                    import time
+                    timestamp_id = int(time.time()) % 10000  # Use last 4 digits of timestamp
+                    
                     # Step 2: Create enhanced transparency image using the levels-adjusted mask
                     self.progress.emit(80, f"Membuat gambar transparan dengan mask yang diatur levels...", image_path)
                     print(f"Langkah 2: Membuat gambar transparan dengan mask yang sudah diatur levels-nya...")
@@ -272,6 +276,17 @@ class RemBgWorker(QObject):
                         cleanup_temp_files_after=False,  # Don't clean up yet - we need the mask for later steps
                         save_mask=save_mask  # This will be used at final cleanup
                     )
+                    
+                    # Now do final cleanup after all operations that need the mask are complete
+                    # Get the full mask path for cleanup - need to account for timestamp in filename
+                    png_dir = os.path.dirname(enhanced_path)
+                    
+                    # Extract timestamp from enhanced path if it exists
+                    import re
+                    timestamp_match = re.search(r'_transparent_(\d+)', enhanced_path)
+                    timestamp_suffix = f"_{timestamp_match.group(1)}" if timestamp_match else ""
+                    
+                    mask_path_adjusted = os.path.join(png_dir, f"{file_name}_mask_adjusted{timestamp_suffix}.png")
                     
                     print(f"Berhasil membuat gambar dengan levels adjustment: {enhanced_path}")
                     

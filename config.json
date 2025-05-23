@@ -2,9 +2,9 @@
     "image_processing": {
         "levels_adjustment": {
             "default": {
-                "black_point": 0,
-                "mid_point": 80,
-                "white_point": 230
+                "black_point": 20,
+                "mid_point": 70,
+                "white_point": 200
             },
             "recommended": {
                 "black_point": 20,
@@ -13,19 +13,19 @@
             }
         },
         "unified_margin": 10,
-        "save_mask": false,
+        "save_mask": true,
         "jpg_export": {
-            "enabled": false,
+            "enabled": true,
             "quality": 90
         }
     },
     "image_cropping": {
-        "enabled": false,
+        "enabled": true,
         "detection_threshold": 30
     },
     "solid_background": {
-        "enabled": false,
-        "color": "#FFFFFF"
+        "enabled": true,
+        "color": "#58FF6B"
     },
     "app": {
         "show_success_stats": true
