@@ -13,7 +13,11 @@
             }
         },
         "unified_margin": 10,
-        "save_mask": true
+        "save_mask": false,
+        "jpg_export": {
+            "enabled": true,
+            "quality": 90
+        }
     },
     "image_cropping": {
         "enabled": true,

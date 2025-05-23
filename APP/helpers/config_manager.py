@@ -26,7 +26,11 @@ DEFAULT_CONFIG = {
             }
         },
         "unified_margin": 10,  # Unified margin setting for all operations
-        "save_mask": True  # Default setting for saving mask files
+        "save_mask": True,  # Default setting for saving mask files
+        "jpg_export": {
+            "enabled": False,
+            "quality": 90  # Default JPG quality (1-100)
+        }
     },
     "image_cropping": {
         "enabled": False,
@@ -304,3 +308,34 @@ def set_save_mask_enabled(enabled):
     except Exception as e:
         print(f"Error setting save_mask: {str(e)}")
         return False
+
+# JPG export settings functions
+def get_jpg_export_enabled():
+    """Get whether JPG export is enabled"""
+    return get_value('image_processing.jpg_export.enabled', False)
+
+def set_jpg_export_enabled(enabled):
+    """Set whether JPG export is enabled"""
+    # Convert to boolean and ensure it's a new value
+    enabled_bool = bool(enabled)
+    current = get_jpg_export_enabled()
+    
+    # Only save if the value is different
+    if current == enabled_bool:
+        logger.info(f"JPG export setting unchanged (already {'enabled' if enabled_bool else 'disabled'})")
+        return True
+        
+    result = set_value('image_processing.jpg_export.enabled', enabled_bool)
+    logger.info(f"JPG export {'enabled' if enabled_bool else 'disabled'} (saved: {result})")
+    return result
+
+def get_jpg_quality():
+    """Get the JPG quality setting (1-100)"""
+    quality = get_value('image_processing.jpg_export.quality', 90)
+    return max(1, min(100, quality))  # Ensure it's within valid range
+
+def set_jpg_quality(quality):
+    """Set the JPG quality setting (1-100)"""
+    # Ensure quality is within valid range
+    quality_int = max(1, min(100, int(quality)))
+    return set_value('image_processing.jpg_export.quality', quality_int)

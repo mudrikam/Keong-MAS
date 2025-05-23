@@ -134,6 +134,16 @@ QFrame#drop_area_frame[dragActive=&quot;true&quot;] {
          </widget>
         </item>
         <item>
+         <widget class="QCheckBox" name="jpgExportCheckBox">
+          <property name="toolTip">
+           <string>Export JPG version (without transparency)</string>
+          </property>
+          <property name="text">
+           <string>JPG</string>
+          </property>
+         </widget>
+        </item>
+        <item>
          <widget class="QCheckBox" name="checkBox">
           <property name="text">
            <string>Crop</string>

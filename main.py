@@ -33,7 +33,8 @@ from APP.helpers.config_manager import (
     get_solid_bg_enabled, set_solid_bg_enabled,
     get_solid_bg_color, set_solid_bg_color,
     get_unified_margin, set_unified_margin,
-    get_save_mask_enabled, set_save_mask_enabled
+    get_save_mask_enabled, set_save_mask_enabled,
+    get_jpg_export_enabled, set_jpg_export_enabled
 )
 import json
 
@@ -355,31 +356,33 @@ class RemBgWorker(QObject):
                         
                         # Get unified margin directly from config
                         unified_margin = get_unified_margin()
+                        solid_bg_path = None
                         
                         # Always pass the enhanced path to the solid background function 
                         # which will automatically use the _transparent.png version
-                        solid_bg_path = add_solid_background(enhanced_path, margin=unified_margin)
+                        if get_solid_bg_enabled():
+                            solid_bg_path = add_solid_background(enhanced_path, margin=unified_margin)
+                            
+                            if solid_bg_path:
+                                print(f"6. Image with solid background saved at: {solid_bg_path} (margin: {unified_margin}px)")
                         
-                        if solid_bg_path:
-                            print(f"6. Image with solid background saved at: {solid_bg_path} (margin: {unified_margin}px)")
+                        # Add JPG conversion - works with either solid or transparent
+                        try:
+                            from APP.helpers.jpg_converter import process_jpg_conversion
+                            
+                            # Process JPG conversion if enabled - pass the best image we have
+                            # (either solid_bg_path or enhanced_path)
+                            jpg_path = process_jpg_conversion(solid_bg_path if solid_bg_path else enhanced_path)
+                            
+                            if jpg_path:
+                                print(f"7. JPG version saved at: {jpg_path}")
+                        except Exception as jpg_error:
+                            print(f"Warning: JPG conversion error: {str(jpg_error)}")
+                                
                     except Exception as bg_error:
                         print(f"Warning: Solid background error: {str(bg_error)}")
                         import traceback
                         traceback.print_exc()
-                        
-                        # Still try to do cleanup even if solid background failed
-                        if not save_mask:
-                            png_dir = os.path.dirname(enhanced_path)
-                            mask_path_adjusted = os.path.join(png_dir, f"{file_name}_mask_adjusted.png")
-                            if os.path.exists(mask_path_adjusted):
-                                try:
-                                    os.remove(mask_path_adjusted)
-                                    print(f"Removed mask file after solid bg error: {mask_path_adjusted}")
-                                except:
-                                    pass
-                                
-                        # Always clean up the original temp files
-                        cleanup_original_temp_files(original_transparent_path, original_mask_path)
                     
                     # Now do final cleanup after all operations that need the mask are complete
                     # Get the full mask path for cleanup
@@ -694,6 +697,27 @@ class MainWindow(QMainWindow):
             # Connect the signal
             self.save_mask_checkbox.stateChanged.connect(self.on_save_mask_changed)
         
+        # Connect the JPG export checkbox
+        self.jpg_export_checkbox = self.ui.findChild(QCheckBox, "jpgExportCheckBox")
+        if self.jpg_export_checkbox:
+            # Set up tooltip
+            self.jpg_export_checkbox.setToolTip(
+                "Ketika diaktifkan, versi JPG akan dibuat dari gambar dengan latar belakang solid.\n"
+                "JPG tidak mendukung transparansi dan disimpan di folder asli."
+            )
+            
+            # Load and set initial state
+            is_jpg_export_enabled = get_jpg_export_enabled()
+            print(f"Initial JPG export setting from config.json: {is_jpg_export_enabled}")
+            
+            # Block signals during initial setup
+            self.jpg_export_checkbox.blockSignals(True)
+            self.jpg_export_checkbox.setChecked(is_jpg_export_enabled)
+            self.jpg_export_checkbox.blockSignals(False)
+            
+            # Connect the signal
+            self.jpg_export_checkbox.stateChanged.connect(self.on_jpg_export_changed)
+        
         # Worker thread for processing
         self.worker = None
         self.thread = None
@@ -860,6 +884,28 @@ class MainWindow(QMainWindow):
                     self.save_mask_checkbox.blockSignals(False)
         except Exception as e:
             print(f"Error updating save mask setting: {str(e)}")
+
+    def on_jpg_export_changed(self, state):
+        """Handle JPG export checkbox state change"""
+        is_checked = (state != 0)  # Consider anything not "Unchecked" as checked
+        
+        print(f"JPG export checkbox changed - Raw state: {state}, Interpreted as: {'checked' if is_checked else 'unchecked'}")
+        
+        try:
+            # Update the config
+            if set_jpg_export_enabled(is_checked):
+                print(f"JPG export {'enabled' if is_checked else 'disabled'} and saved to config")
+                print(f"JPG export {'diaktifkan' if is_checked else 'dinonaktifkan'} dan disimpan")
+                
+                # Verify setting
+                current = get_jpg_export_enabled()
+                if current != is_checked:
+                    print(f"WARNING: Config value doesn't match expected value!")
+                    self.jpg_export_checkbox.blockSignals(True)
+                    self.jpg_export_checkbox.setChecked(current)
+                    self.jpg_export_checkbox.blockSignals(False)
+        except Exception as e:
+            print(f"Error updating JPG export setting: {str(e)}")
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
