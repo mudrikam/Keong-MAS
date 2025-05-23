@@ -17,7 +17,7 @@
     },
     "image_cropping": {
         "enabled": true,
-        "detection_threshold": 10
+        "detection_threshold": 30
     },
     "solid_background": {
         "enabled": true,

@@ -1132,7 +1132,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Proses Dihentikan", "Proses penghapusan latar belakang telah dihentikan.")
             
             # Reset UI after a short delay
-            QTimer.singleShot(500, self.reset_ui_state)
+            QTimer.singleShot(100, self.reset_ui_state)
 
 def main():
     app = QApplication(sys.argv)
