@@ -222,7 +222,38 @@ Only applied where possible based on content.</string>
       <item>
        <widget class="QPushButton" name="stopButton">
         <property name="text">
-         <string>Stop</string>
+         <string></string>
+        </property>
+        <property name="toolTip">
+         <string>Berhenti/Hentikan proses</string>
+        </property>
+        <property name="iconSize">
+         <size>
+          <width>24</width>
+          <height>24</height>
+         </size>
+        </property>
+        <property name="flat">
+         <bool>false</bool>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="repeatButton">
+        <property name="text">
+         <string></string>
+        </property>
+        <property name="toolTip">
+         <string>Ulangi proses terakhir</string>
+        </property>
+        <property name="iconSize">
+         <size>
+          <width>24</width>
+          <height>24</height>
+         </size>
+        </property>
+        <property name="flat">
+         <bool>false</bool>
         </property>
        </widget>
       </item>

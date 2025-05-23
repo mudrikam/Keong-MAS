@@ -484,6 +484,9 @@ class MainWindow(QMainWindow):
         # Set icons on buttons using QtAwesome
         self.setup_button_icons()
         
+        # Store last processed files
+        self.last_processed_files = []
+        
         # Access the drop area frame
         self.drop_area = self.ui.findChild(QFrame, "drop_area_frame")
         self.drop_area.setAcceptDrops(False)  # We'll handle drops at the main window level
@@ -641,6 +644,7 @@ class MainWindow(QMainWindow):
         self.open_folder_btn = self.ui.findChild(QPushButton, "openFolder")
         self.open_files_btn = self.ui.findChild(QPushButton, "openFiles")
         self.stop_button = self.ui.findChild(QPushButton, "stopButton")
+        self.repeat_button = self.ui.findChild(QPushButton, "repeatButton")
         self.color_picker_button = self.ui.findChild(QPushButton, "colorPickerButton")
         self.whatsapp_button = self.ui.findChild(QPushButton, "whatsappButton")
         
@@ -663,6 +667,16 @@ class MainWindow(QMainWindow):
             self.stop_button.setStyleSheet("""
                 QPushButton:enabled { background-color: #e74c3c; }
             """)
+        
+        if self.repeat_button:
+            repeat_icon = qta.icon('fa5s.redo-alt', color='#2ecc71')
+            self.repeat_button.setIcon(repeat_icon)
+            self.repeat_button.setIconSize(QSize(16, 16))
+            self.repeat_button.setEnabled(False)
+            self.repeat_button.setStyleSheet("""
+                QPushButton:enabled { background-color: #2ecc71; }
+            """)
+            self.repeat_button.clicked.connect(self.on_repeat_clicked)
         
         if self.color_picker_button:
             # Set the eyedropper icon to black for better visibility on light backgrounds
@@ -822,6 +836,9 @@ class MainWindow(QMainWindow):
         else:
             event.ignore()    
     def process_files(self, file_paths):
+        # Store the current file paths for repeat functionality
+        self.last_processed_files = file_paths.copy()
+        
         # Show progress bar without hiding drop area
         self.progress_bar.show()
         self.progress_bar.setValue(0)
@@ -843,6 +860,10 @@ class MainWindow(QMainWindow):
         # Enable the stop button during processing
         if hasattr(self, 'stop_button') and self.stop_button:
             self.stop_button.setEnabled(True)
+        
+        # Disable the repeat button during processing
+        if hasattr(self, 'repeat_button') and self.repeat_button:
+            self.repeat_button.setEnabled(False)
         
         # Create worker and thread
         self.worker = RemBgWorker(file_paths)
@@ -984,6 +1005,11 @@ class MainWindow(QMainWindow):
             self.stop_button.setEnabled(False)
             print("Stop button disabled after processing completed")
         
+        # Enable the repeat button if there are files to repeat
+        if hasattr(self, 'repeat_button') and self.repeat_button and self.last_processed_files:
+            self.repeat_button.setEnabled(True)
+            print("Repeat button enabled after processing completed")
+        
         # Calculate minutes and seconds
         minutes = int(processing_time // 60)
         seconds = int(processing_time % 60)
@@ -1041,6 +1067,10 @@ class MainWindow(QMainWindow):
         # Disable stop button if it exists
         if hasattr(self, 'stop_button') and self.stop_button:
             self.stop_button.setEnabled(False)
+        
+        # Update repeat button state
+        if hasattr(self, 'repeat_button') and self.repeat_button:
+            self.repeat_button.setEnabled(len(self.last_processed_files) > 0)
             
     def open_folder_dialog(self):
         """Handles the Open Folder button click by opening a folder dialog"""
@@ -1128,11 +1158,33 @@ class MainWindow(QMainWindow):
                 
             print("Processing aborted by user")
             
+            # Properly terminate the thread before resetting UI
+            if self.thread and self.thread.isRunning():
+                self.thread.quit()
+                if not self.thread.wait(1000):  # Wait 1 second for thread to finish
+                    print("WARNING: Force terminating thread...")
+                    self.thread.terminate()
+                    self.thread.wait()
+                
+                self.thread = None
+                self.worker = None
+            
             # Show a short message
             QMessageBox.information(self, "Proses Dihentikan", "Proses penghapusan latar belakang telah dihentikan.")
             
-            # Reset UI after a short delay
-            QTimer.singleShot(100, self.reset_ui_state)
+            # Reset UI immediately
+            self.reset_ui_state()
+
+    def on_repeat_clicked(self):
+        """Handle the Repeat button click to process the last files again"""
+        if self.last_processed_files:
+            print(f"Repeating last process with {len(self.last_processed_files)} files")
+            # Reset UI state before starting new processing
+            self.reset_ui_state()
+            # Start processing using the same method as before
+            self.process_files(self.last_processed_files)
+        else:
+            print("No previous files to repeat")
 
 def main():
     app = QApplication(sys.argv)
