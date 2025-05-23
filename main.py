@@ -539,28 +539,6 @@ class MainWindow(QMainWindow):
         self.worker = None
         self.thread = None
 
-        # Add a simple menu bar for configuration options
-        self.setup_menu()
-
-    def setup_menu(self):
-        """Set up the menu bar with configuration options"""
-        # Create config menu
-        config_menu = self.menuBar().addMenu("Config")
-        
-        # Add action to show configuration
-        show_config_action = config_menu.addAction("Show Current Config")
-        show_config_action.triggered.connect(self.show_config_info)
-        
-        # Add action to toggle auto crop
-        toggle_crop_action = config_menu.addAction("Toggle Auto Crop")
-        toggle_crop_action.triggered.connect(self.toggle_auto_crop)
-
-    def toggle_auto_crop(self):
-        """Toggle the auto crop setting"""
-        if hasattr(self, 'auto_crop_checkbox') and self.auto_crop_checkbox:
-            current_state = self.auto_crop_checkbox.isChecked()
-            self.auto_crop_checkbox.setChecked(not current_state)
-
     def update_color_button(self, color_hex):
         """Update the color button background to match the selected color"""
         if self.color_picker_button:
@@ -585,7 +563,7 @@ class MainWindow(QMainWindow):
             # Update the config
             if set_solid_bg_enabled(is_checked):
                 print(f"Solid background {'enabled' if is_checked else 'disabled'} and saved to config")
-                self.statusBar().showMessage(f"Solid background {'diaktifkan' if is_checked else 'dinonaktifkan'} dan disimpan", 3000)
+                print(f"Solid background {'diaktifkan' if is_checked else 'dinonaktifkan'} dan disimpan")
                 
                 # Update control states
                 self.update_solid_bg_controls()
@@ -619,7 +597,7 @@ class MainWindow(QMainWindow):
                 # Save to config
                 if set_solid_bg_color(color_hex):
                     print(f"Background color set to {color_hex} and saved to config")
-                    self.statusBar().showMessage(f"Background color set to {color_hex}", 3000)
+                    print(f"Background color set to {color_hex}")
                     
                     # Update button appearance
                     self.update_color_button(color_hex)
@@ -632,7 +610,7 @@ class MainWindow(QMainWindow):
             # Save the new margin value to config
             if set_unified_margin(value):
                 print(f"Unified margin set to {value}px and saved to config")
-                self.statusBar().showMessage(f"Margin set to {value}px for all operations", 3000)
+                print(f"Margin set to {value}px for all operations")
         except Exception as e:
             print(f"Error setting unified margin: {str(e)}")
             import traceback
@@ -925,7 +903,7 @@ class MainWindow(QMainWindow):
                 print(f"Auto crop setting {'enabled' if is_checked else 'disabled'} and saved to config")
                 
                 # Show a brief notification that the setting was saved
-                self.statusBar().showMessage(f"Auto crop {'diaktifkan' if is_checked else 'dinonaktifkan'} dan disimpan", 3000)
+                print(f"Auto crop {'diaktifkan' if is_checked else 'dinonaktifkan'} dan disimpan")
                 
                 # Verify the setting was saved by reading it back
                 current = get_auto_crop_enabled()
@@ -952,40 +930,6 @@ class MainWindow(QMainWindow):
             print(f"Error in on_auto_crop_changed: {str(e)}")
             import traceback
             traceback.print_exc()
-
-    def show_config_info(self):
-        """Shows information about the current configuration"""
-        try:
-            # Get config path
-            config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
-            
-            # Load the configuration
-            with open(config_path, 'r') as f:
-                config = json.load(f)
-            
-            # Format the information
-            crop_enabled = config.get('image_cropping', {}).get('enabled', False)
-            detection_threshold = config.get('image_cropping', {}).get('detection_threshold', 5)
-            unified_margin = config.get('image_processing', {}).get('unified_margin', 10)
-            
-            # Add solid background information
-            solid_bg_enabled = config.get('solid_background', {}).get('enabled', False)
-            solid_bg_color = config.get('solid_background', {}).get('color', '#FFFFFF')
-            
-            message = (
-                f"Current Configuration:\n\n"
-                f"Unified Margin: {unified_margin} pixels\n\n"
-                f"Auto Crop: {'Enabled' if crop_enabled else 'Disabled'}\n"
-                f"Detection Threshold: {detection_threshold} (0-255)\n\n"
-                f"Solid Background: {'Enabled' if solid_bg_enabled else 'Disabled'}\n"
-                f"Background Color: {solid_bg_color}\n\n"
-                f"Config File: {config_path}"
-            )
-            
-            # Show the dialog
-            QMessageBox.information(self, "Configuration Information", message)
-        except Exception as e:
-            QMessageBox.warning(self, "Error", f"Failed to load configuration: {str(e)}")
 
     def on_stop_clicked(self):
         """Handle the Stop button click"""
