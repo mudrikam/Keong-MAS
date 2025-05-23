@@ -2,6 +2,8 @@ import os
 import sys
 import time
 import tempfile
+import threading
+import queue
 from pathlib import Path
 
 # Add the current directory to the path so Python can find the APP module
@@ -114,13 +116,15 @@ class RemBgWorker(QObject):
             file_name = input_path.stem
             output_path = os.path.join(output_dir, f"{file_name}.png")
             mask_path = os.path.join(output_dir, f"{file_name}_mask.png")
-              # Update status - preparing image
+            
+            # Update status - preparing image
             status_msg = f"Menyiapkan: {file_name}"
             self.progress.emit(5, status_msg, image_path)
             
             # Import helper untuk progress bar
             from APP.helpers.ui_helpers import download_progress_callback
-              # Gunakan model default
+            
+            # Gunakan model default
             self.progress.emit(10, f"Menyiapkan model: {os.path.basename(image_path)}", image_path)
             print(f"Menyiapkan model default...")
             model_name = model_manager.prepare_model(callback=download_progress_callback)
@@ -128,246 +132,302 @@ class RemBgWorker(QObject):
             
             # Process with rembg for main transparent image            
             self.progress.emit(20, f"Memuat gambar: {os.path.basename(image_path)}", image_path)
-            input_img = Image.open(image_path)
             
-            try:                # Buat session untuk model dengan parameter yang lebih stabil
-                print(f"Membuat session dengan model {model_name}...")                
-                session = rembg.new_session(model_name)
-                  # Generate the main transparent image
-                self.progress.emit(30, f"Memproses: Menghapus latar belakang...", image_path)
-                print(f"Menghapus latar belakang gambar...")
-                input_size = input_img.size
+            try:
+                # Load the image with a timeout protection
+                input_img = Image.open(image_path)
                 
-                # Generate main transparent image with optimized parameters                
-                # Setting alpha_matting_foreground_threshold and alpha_matting_background_threshold
-                # can help avoid the Cholesky decomposition error
-                self.progress.emit(40, f"Memproses: Menerapkan alpha matting...", image_path)
-                output_img = rembg.remove(
-                    input_img, 
-                    alpha_matting=True,
-                    alpha_matting_foreground_threshold=240,
-                    alpha_matting_background_threshold=10,
-                    alpha_matting_erode_size=10,
-                    session=session
-                )
+                # Create a result queue for the threaded processing
+                result_queue = queue.Queue()
+                processing_complete = threading.Event()
                 
-                # Periksa ukuran output untuk mencegah hasil yang tidak normal
-                output_size = output_img.size
-                print(f"Ukuran input: {input_size[0]}x{input_size[1]}, ukuran output: {output_size[0]}x{output_size[1]}")
-                if output_size[0] > input_size[0] * 2 or output_size[1] > input_size[1] * 2:
-                    print(f"PERINGATAN: Ukuran output tidak normal! Menyesuaikan ukuran...")
-                    output_img = output_img.resize(input_size, Image.LANCZOS)
-                self.progress.emit(50, f"Menyimpan gambar transparan...", image_path)
-                output_img.save(output_path)
-                print(f"Gambar transparan disimpan ke {output_path}")
-                  # Generate and save the mask separately
-                self.progress.emit(60, f"Membuat mask...", image_path)
-                print(f"Menghasilkan mask...")
-                output_mask = rembg.remove(input_img, only_mask=True, session=session)
-                
-                # Pastikan mask memiliki ukuran yang sama dengan gambar input
-                if output_mask.size != input_size:
-                    print(f"PERINGATAN: Ukuran mask tidak sama dengan input! Menyesuaikan ukuran...")
-                    output_mask = output_mask.resize(input_size, Image.LANCZOS)
-                
-                output_mask.save(mask_path)
-                print(f"Mask disimpan ke {mask_path}")
-            except Exception as e:
-                print(f"Error saat memproses dengan rembg: {str(e)}")
-                raise                
-            # Import and use the image_utils helper to create a third enhanced image
-            try:                    
-                self.progress.emit(70, f"Menghasilkan gambar transparan yang disempurnakan...", image_path)
-                from APP.helpers.image_utils import (
-                    enhance_transparency, combine_with_mask, enhance_transparency_with_levels,
-                    get_levels_config, cleanup_original_temp_files
-                )
-                from APP.helpers.config_manager import get_save_mask_enabled
-                
-                # Get the save_mask setting from config
-                save_mask = get_save_mask_enabled()
-                print(f"Save mask setting from config: {save_mask}")
-                
-                # Get default extreme levels values for sharper edges
-                black_point, mid_point, white_point = get_levels_config(use_recommended=False)
-                  # Rename our paths clearly for the four types of files
-                original_transparent_path = output_path  # Already saved earlier
-                original_mask_path = mask_path          # Already saved earlier
-                
-                # Setup paths for new files
-                output_dir = os.path.dirname(image_path)
-                file_name = input_path.stem
-                adjusted_mask_path = os.path.join(output_dir, f"{file_name}_mask_adjusted.png")
-                final_transparent_path = os.path.join(output_dir, f"{file_name}_transparent.png")
-                  # Report status
-                self.progress.emit(65, f"Menghasilkan mask yang diatur levels-nya...", image_path)
-                print(f"Langkah 1: Menerapkan levels adjustment pada mask...")
-                
-                # Step 2: Create enhanced transparency image using the levels-adjusted mask
-                self.progress.emit(80, f"Membuat gambar transparan dengan mask yang diatur levels...", image_path)
-                print(f"Langkah 2: Membuat gambar transparan dengan mask yang sudah diatur levels-nya...")
-                
-                # Call the enhanced function passing the save_mask parameter
-                # Set cleanup_temp_files_after to False so we can control cleanup timing
-                enhanced_path = enhance_transparency_with_levels(
-                    original_transparent_path, original_mask_path,
-                    output_suffix="_transparent", 
-                    black_point=black_point, mid_point=mid_point, white_point=white_point,
-                    save_adjusted_mask=True,  # Always create the adjusted mask initially
-                    cleanup_temp_files_after=False,  # Don't clean up yet - we need the mask for later steps
-                    save_mask=save_mask  # This will be used at final cleanup
-                )
-                
-                print(f"Berhasil membuat gambar dengan levels adjustment: {enhanced_path}")
-                
-                # If there was a problem with the levels adjustment (rare), we have alternative methods
-                if not enhanced_path:
-                    print(f"Levels adjustment tidak berhasil, menggunakan metode standar...")
-                    enhanced_path = combine_with_mask(original_transparent_path, original_mask_path, output_suffix="_transparent")
-                    print(f"Berhasil membuat gambar dengan metode standar: {enhanced_path}")
-                
-                # Summary of files saved
-                print(f"File yang disimpan:")
-                print(f"1. Gambar transparan asli: {original_transparent_path}")
-                print(f"2. Mask asli: {original_mask_path}")
-                print(f"3. Mask yang diatur levels: {os.path.join(output_dir, f'{file_name}_mask_adjusted.png')}")
-                print(f"4. Gambar transparan final: {enhanced_path}")
-                
-                # Apply auto-cropping if enabled in settings
-                try:
-                    from APP.helpers.image_crop import crop_transparent_image
-                    from APP.helpers.config_manager import get_auto_crop_enabled, get_unified_margin
-                    
-                    auto_crop_enabled = get_auto_crop_enabled()
-                    if auto_crop_enabled:
-                        self.progress.emit(90, f"Melakukan auto crop...", image_path)
-                        print(f"Auto crop enabled (dari config.json), cropping image...")
+                # Define the processing function to run in a separate thread with timeout
+                def process_with_timeout():
+                    try:
+                        # Create session for the model
+                        print(f"Membuat session dengan model {model_name}...")                
+                        session = rembg.new_session(model_name)
                         
-                        # Correctly determine the adjusted mask path
-                        # First, check if we're already in a PNG folder
-                        mask_dir = os.path.dirname(original_mask_path)
+                        # Generate the main transparent image
+                        self.progress.emit(30, f"Memproses: Menghapus latar belakang...", image_path)
+                        print(f"Menghapus latar belakang gambar...")
+                        input_size = input_img.size
                         
-                        # Make sure to use the PNG directory for the adjusted mask
-                        if os.path.basename(mask_dir).upper() == 'PNG':
-                            # Already in PNG folder
-                            png_dir = mask_dir
-                        else:
-                            # Need to use the PNG subfolder
-                            png_dir = os.path.join(os.path.dirname(original_mask_path), 'PNG')
-                        
-                        # Use same filename logic as in image_utils.py
-                        mask_to_use = os.path.join(png_dir, f'{file_name}_mask_adjusted.png')
-                        
-                        print(f"Looking for adjusted mask at: {mask_to_use}")
-                        
-                        # Get the unified margin value
-                        unified_margin = get_unified_margin()
-                        print(f"Using unified margin: {unified_margin}px (dari config.json)")
-                        
-                        # Apply cropping with explicit margin parameter
-                        cropped_path = crop_transparent_image(
-                            enhanced_path if enhanced_path else original_transparent_path, 
-                            mask_to_use, 
-                            output_path=None,  # Overwrite the input file
-                            threshold=unified_margin  # Use unified margin value directly
+                        # Generate main transparent image with optimized parameters
+                        self.progress.emit(40, f"Memproses: Menerapkan alpha matting...", image_path)
+                        output_img = rembg.remove(
+                            input_img, 
+                            alpha_matting=True,
+                            alpha_matting_foreground_threshold=240,
+                            alpha_matting_background_threshold=10,
+                            alpha_matting_erode_size=10,
+                            session=session
                         )
                         
-                        if cropped_path:
-                            print(f"5. Auto-cropped image saved at: {cropped_path}")
-                            # Update our reference to the final image path
-                            enhanced_path = cropped_path
-                    else:
-                        print(f"Auto crop disabled (dari config.json), skipping crop step")
-                except Exception as crop_error:
-                    print(f"Warning: Auto crop error: {str(crop_error)}")
+                        # Check output size
+                        output_size = output_img.size
+                        print(f"Ukuran input: {input_size[0]}x{input_size[1]}, ukuran output: {output_size[0]}x{output_size[1]}")
+                        if output_size[0] > input_size[0] * 2 or output_size[1] > input_size[1] * 2:
+                            print(f"PERINGATAN: Ukuran output tidak normal! Menyesuaikan ukuran...")
+                            output_img = output_img.resize(input_size, Image.LANCZOS)
+                        
+                        # Save the transparent image
+                        output_img.save(output_path)
+                        
+                        # Generate and save the mask
+                        output_mask = rembg.remove(input_img, only_mask=True, session=session)
+                        
+                        # Ensure mask has the same size as input
+                        if output_mask.size != input_size:
+                            print(f"PERINGATAN: Ukuran mask tidak sama dengan input! Menyesuaikan ukuran...")
+                            output_mask = output_mask.resize(input_size, Image.LANCZOS)
+                        
+                        output_mask.save(mask_path)
+                        
+                        # Put the results in the queue
+                        result_queue.put((output_img, output_mask, True))
+                        
+                    except Exception as e:
+                        # Put the error in the queue
+                        print(f"Error in timeout thread: {str(e)}")
+                        result_queue.put((None, None, False))
                     
-                    # Still try to do cleanup if crop failed
-                    if not save_mask:
-                        png_dir = os.path.dirname(enhanced_path) if enhanced_path else os.path.dirname(original_transparent_path)
-                        mask_path_adjusted = os.path.join(png_dir, f"{file_name}_mask_adjusted.png")
-                        if os.path.exists(mask_path_adjusted):
-                            try:
-                                os.remove(mask_path_adjusted)
-                                print(f"Removed mask file after crop error: {mask_path_adjusted}")
-                            except:
-                                pass
-                    
-                    # Always clean up the original temp files
-                    cleanup_original_temp_files(original_transparent_path, original_mask_path)
+                    finally:
+                        # Signal that processing is complete
+                        processing_complete.set()
                 
-                # After processing auto crop, add solid background if enabled
+                # Create and start the processing thread
+                processing_thread = threading.Thread(target=process_with_timeout)
+                processing_thread.daemon = True
+                processing_thread.start()
+                
+                # Wait for processing with a timeout (30 seconds)
+                processing_succeeded = processing_complete.wait(timeout=30)
+                
+                # If the timeout was reached
+                if not processing_succeeded:
+                    print(f"WARNING: Processing timeout (30s) reached for {image_path}")
+                    print(f"Skipping this image and continuing with next one")
+                    return
+                
+                # Get the results from the queue if processing completed
+                if not result_queue.empty():
+                    output_img, output_mask, success = result_queue.get()
+                    if not success:
+                        print(f"Processing failed for {image_path}")
+                        return
+                else:
+                    print(f"No results available for {image_path}")
+                    return
+                
+                # Continue with the rest of the processing (enhance transparency, etc.)
+                self.progress.emit(50, f"Menyimpan gambar transparan...", image_path)
+                print(f"Gambar transparan disimpan ke {output_path}")
+                self.progress.emit(60, f"Membuat mask...", image_path)
+                print(f"Mask disimpan ke {mask_path}")
+                
+                # Continue with the remaining processing steps
+                # Import and use the image_utils helper to create a third enhanced image
                 try:
-                    from APP.helpers.solid_background import add_solid_background
+                    self.progress.emit(70, f"Menghasilkan gambar transparan yang disempurnakan...", image_path)
+                    from APP.helpers.image_utils import (
+                        enhance_transparency, combine_with_mask, enhance_transparency_with_levels,
+                        get_levels_config, cleanup_original_temp_files
+                    )
+                    from APP.helpers.config_manager import get_save_mask_enabled
                     
-                    # Get unified margin directly from config
-                    unified_margin = get_unified_margin()
+                    # Get the save_mask setting from config
+                    save_mask = get_save_mask_enabled()
+                    print(f"Save mask setting from config: {save_mask}")
                     
-                    # Always pass the enhanced path to the solid background function 
-                    # which will automatically use the _transparent.png version
-                    solid_bg_path = add_solid_background(enhanced_path, margin=unified_margin)
+                    # Get default extreme levels values for sharper edges
+                    black_point, mid_point, white_point = get_levels_config(use_recommended=False)
                     
-                    if solid_bg_path:
-                        print(f"6. Image with solid background saved at: {solid_bg_path} (margin: {unified_margin}px)")
-                except Exception as bg_error:
-                    print(f"Warning: Solid background error: {str(bg_error)}")
-                    import traceback
-                    traceback.print_exc()
+                    # Rename our paths clearly for the four types of files
+                    original_transparent_path = output_path  # Already saved earlier
+                    original_mask_path = mask_path          # Already saved earlier
                     
-                    # Still try to do cleanup even if solid background failed
-                    if not save_mask:
-                        png_dir = os.path.dirname(enhanced_path)
-                        mask_path_adjusted = os.path.join(png_dir, f"{file_name}_mask_adjusted.png")
-                        if os.path.exists(mask_path_adjusted):
-                            try:
-                                os.remove(mask_path_adjusted)
-                                print(f"Removed mask file after solid bg error: {mask_path_adjusted}")
-                            except:
-                                pass
+                    # Setup paths for new files
+                    output_dir = os.path.dirname(image_path)
+                    file_name = input_path.stem
+                    adjusted_mask_path = os.path.join(output_dir, f"{file_name}_mask_adjusted.png")
+                    final_transparent_path = os.path.join(output_dir, f"{file_name}_transparent.png")
+                    
+                    # Report status
+                    self.progress.emit(65, f"Menghasilkan mask yang diatur levels-nya...", image_path)
+                    print(f"Langkah 1: Menerapkan levels adjustment pada mask...")
+                    
+                    # Step 2: Create enhanced transparency image using the levels-adjusted mask
+                    self.progress.emit(80, f"Membuat gambar transparan dengan mask yang diatur levels...", image_path)
+                    print(f"Langkah 2: Membuat gambar transparan dengan mask yang sudah diatur levels-nya...")
+                    
+                    # Call the enhanced function passing the save_mask parameter
+                    # Set cleanup_temp_files_after to False so we can control cleanup timing
+                    enhanced_path = enhance_transparency_with_levels(
+                        original_transparent_path, original_mask_path,
+                        output_suffix="_transparent", 
+                        black_point=black_point, mid_point=mid_point, white_point=white_point,
+                        save_adjusted_mask=True,  # Always create the adjusted mask initially
+                        cleanup_temp_files_after=False,  # Don't clean up yet - we need the mask for later steps
+                        save_mask=save_mask  # This will be used at final cleanup
+                    )
+                    
+                    print(f"Berhasil membuat gambar dengan levels adjustment: {enhanced_path}")
+                    
+                    # If there was a problem with the levels adjustment (rare), we have alternative methods
+                    if not enhanced_path:
+                        print(f"Levels adjustment tidak berhasil, menggunakan metode standar...")
+                        enhanced_path = combine_with_mask(original_transparent_path, original_mask_path, output_suffix="_transparent")
+                        print(f"Berhasil membuat gambar dengan metode standar: {enhanced_path}")
+                    
+                    # Summary of files saved
+                    print(f"File yang disimpan:")
+                    print(f"1. Gambar transparan asli: {original_transparent_path}")
+                    print(f"2. Mask asli: {original_mask_path}")
+                    print(f"3. Mask yang diatur levels: {os.path.join(output_dir, f'{file_name}_mask_adjusted.png')}")
+                    print(f"4. Gambar transparan final: {enhanced_path}")
+                    
+                    # Apply auto-cropping if enabled in settings
+                    try:
+                        from APP.helpers.image_crop import crop_transparent_image
+                        from APP.helpers.config_manager import get_auto_crop_enabled, get_unified_margin
+                        
+                        auto_crop_enabled = get_auto_crop_enabled()
+                        if auto_crop_enabled:
+                            self.progress.emit(90, f"Melakukan auto crop...", image_path)
+                            print(f"Auto crop enabled (dari config.json), cropping image...")
                             
+                            # Correctly determine the adjusted mask path
+                            # First, check if we're already in a PNG folder
+                            mask_dir = os.path.dirname(original_mask_path)
+                            
+                            # Make sure to use the PNG directory for the adjusted mask
+                            if os.path.basename(mask_dir).upper() == 'PNG':
+                                # Already in PNG folder
+                                png_dir = mask_dir
+                            else:
+                                # Need to use the PNG subfolder
+                                png_dir = os.path.join(os.path.dirname(original_mask_path), 'PNG')
+                            
+                            # Use same filename logic as in image_utils.py
+                            mask_to_use = os.path.join(png_dir, f'{file_name}_mask_adjusted.png')
+                            
+                            print(f"Looking for adjusted mask at: {mask_to_use}")
+                            
+                            # Get the unified margin value
+                            unified_margin = get_unified_margin()
+                            print(f"Using unified margin: {unified_margin}px (dari config.json)")
+                            
+                            # Apply cropping with explicit margin parameter
+                            cropped_path = crop_transparent_image(
+                                enhanced_path if enhanced_path else original_transparent_path, 
+                                mask_to_use, 
+                                output_path=None,  # Overwrite the input file
+                                threshold=unified_margin  # Use unified margin value directly
+                            )
+                            
+                            if cropped_path:
+                                print(f"5. Auto-cropped image saved at: {cropped_path}")
+                                # Update our reference to the final image path
+                                enhanced_path = cropped_path
+                        else:
+                            print(f"Auto crop disabled (dari config.json), skipping crop step")
+                    except Exception as crop_error:
+                        print(f"Warning: Auto crop error: {str(crop_error)}")
+                        
+                        # Still try to do cleanup if crop failed
+                        if not save_mask:
+                            png_dir = os.path.dirname(enhanced_path) if enhanced_path else os.path.dirname(original_transparent_path)
+                            mask_path_adjusted = os.path.join(png_dir, f"{file_name}_mask_adjusted.png")
+                            if os.path.exists(mask_path_adjusted):
+                                try:
+                                    os.remove(mask_path_adjusted)
+                                    print(f"Removed mask file after crop error: {mask_path_adjusted}")
+                                except:
+                                    pass
+                        
+                        # Always clean up the original temp files
+                        cleanup_original_temp_files(original_transparent_path, original_mask_path)
+                    
+                    # After processing auto crop, add solid background if enabled
+                    try:
+                        from APP.helpers.solid_background import add_solid_background
+                        
+                        # Get unified margin directly from config
+                        unified_margin = get_unified_margin()
+                        
+                        # Always pass the enhanced path to the solid background function 
+                        # which will automatically use the _transparent.png version
+                        solid_bg_path = add_solid_background(enhanced_path, margin=unified_margin)
+                        
+                        if solid_bg_path:
+                            print(f"6. Image with solid background saved at: {solid_bg_path} (margin: {unified_margin}px)")
+                    except Exception as bg_error:
+                        print(f"Warning: Solid background error: {str(bg_error)}")
+                        import traceback
+                        traceback.print_exc()
+                        
+                        # Still try to do cleanup even if solid background failed
+                        if not save_mask:
+                            png_dir = os.path.dirname(enhanced_path)
+                            mask_path_adjusted = os.path.join(png_dir, f"{file_name}_mask_adjusted.png")
+                            if os.path.exists(mask_path_adjusted):
+                                try:
+                                    os.remove(mask_path_adjusted)
+                                    print(f"Removed mask file after solid bg error: {mask_path_adjusted}")
+                                except:
+                                    pass
+                                
+                        # Always clean up the original temp files
+                        cleanup_original_temp_files(original_transparent_path, original_mask_path)
+                    
+                    # Now do final cleanup after all operations that need the mask are complete
+                    # Get the full mask path for cleanup
+                    png_dir = os.path.dirname(enhanced_path)
+                    mask_path_adjusted = os.path.join(png_dir, f"{file_name}_mask_adjusted.png")
+                    
+                    # Only clean up the adjusted mask if save_mask is False
+                    if not save_mask and os.path.exists(mask_path_adjusted):
+                        print(f"Cleaning up adjusted mask: {mask_path_adjusted}")
+                        try:
+                            os.remove(mask_path_adjusted)
+                            print(f"Removed mask file: {mask_path_adjusted}")
+                        except Exception as rm_err:
+                            print(f"Error removing mask file: {str(rm_err)}")
+                    else:
+                        print(f"Keeping mask file: {mask_path_adjusted} (save_mask={save_mask})")
+                    
                     # Always clean up the original temp files
                     cleanup_original_temp_files(original_transparent_path, original_mask_path)
-                
-                # Now do final cleanup after all operations that need the mask are complete
-                # Get the full mask path for cleanup
-                png_dir = os.path.dirname(enhanced_path)
-                mask_path_adjusted = os.path.join(png_dir, f"{file_name}_mask_adjusted.png")
-                
-                # Only clean up the adjusted mask if save_mask is False
-                if not save_mask and os.path.exists(mask_path_adjusted):
-                    print(f"Cleaning up adjusted mask: {mask_path_adjusted}")
-                    try:
-                        os.remove(mask_path_adjusted)
-                        print(f"Removed mask file: {mask_path_adjusted}")
-                    except Exception as rm_err:
-                        print(f"Error removing mask file: {str(rm_err)}")
-                else:
-                    print(f"Keeping mask file: {mask_path_adjusted} (save_mask={save_mask})")
-                
-                # Always clean up the original temp files
-                cleanup_original_temp_files(original_transparent_path, original_mask_path)
-                
-                # Always emit the path to the final transparent PNG for preview
-                png_dir = os.path.dirname(enhanced_path)
-                final_transparent_path = os.path.join(png_dir, f"{file_name}_transparent.png")
-                
-                # If the final transparent PNG exists, use it for preview
-                if os.path.exists(final_transparent_path):
-                    self.file_completed.emit(final_transparent_path)
-                    print(f"Emitting file_completed with final transparent PNG: {final_transparent_path}")
-                else:
-                    # Fallback to the enhanced path if the final transparent doesn't exist
-                    self.file_completed.emit(enhanced_path if enhanced_path else original_transparent_path)
-                    print(f"Emitting file_completed with fallback path: {enhanced_path}")
                     
-                model_info = f" (model: {model_name})" if 'model_name' in locals() else ""
-                print(f"Semua pemrosesan selesai{model_info}")
+                    # Always emit the path to the final transparent PNG for preview
+                    png_dir = os.path.dirname(enhanced_path)
+                    final_transparent_path = os.path.join(png_dir, f"{file_name}_transparent.png")
+                    
+                    # If the final transparent PNG exists, use it for preview
+                    if os.path.exists(final_transparent_path):
+                        self.file_completed.emit(final_transparent_path)
+                        print(f"Emitting file_completed with final transparent PNG: {final_transparent_path}")
+                    else:
+                        # Fallback to the enhanced path if the final transparent doesn't exist
+                        self.file_completed.emit(enhanced_path if enhanced_path else original_transparent_path)
+                        print(f"Emitting file_completed with fallback path: {enhanced_path}")
+                        
+                    model_info = f" (model: {model_name})" if 'model_name' in locals() else ""
+                    print(f"Semua pemrosesan selesai{model_info}")
+                    
+                except Exception as e:
+                    print(f"Error saat membuat gambar transparan: {str(e)}")
+                    enhanced_path = None
+                    self.file_completed.emit(output_path)
+                
+                # Increment the processed files count on success
+                self.processed_files_count += 1
                 
             except Exception as e:
-                print(f"Error saat membuat gambar transparan: {str(e)}")
-                enhanced_path = None
-                self.file_completed.emit(output_path)
-            
-            self.processed_files_count += 1
+                print(f"Error saat memproses dengan rembg: {str(e)}")
+                raise
+                
         except Exception as e:
             print(f"Error removing background from {image_path}: {str(e)}")
 
