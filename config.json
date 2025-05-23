@@ -20,7 +20,7 @@
     },
     "solid_background": {
         "enabled": true,
-        "color": "#24C70B"
+        "color": "#899395"
     },
     "app": {
         "show_success_stats": true

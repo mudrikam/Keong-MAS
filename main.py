@@ -273,14 +273,12 @@ class RemBgWorker(QObject):
                 try:
                     from APP.helpers.solid_background import add_solid_background
                     
-                    # Use the cropped image if available, otherwise use the enhanced image
-                    image_to_use = enhanced_path if enhanced_path else original_transparent_path
-                    
                     # Get unified margin directly from config
                     unified_margin = get_unified_margin()
                     
-                    # Add solid background with explicit margin parameter
-                    solid_bg_path = add_solid_background(image_to_use, margin=unified_margin)
+                    # Always pass the enhanced path to the solid background function 
+                    # which will automatically use the _transparent.png version
+                    solid_bg_path = add_solid_background(enhanced_path, margin=unified_margin)
                     
                     if solid_bg_path:
                         print(f"6. Image with solid background saved at: {solid_bg_path} (margin: {unified_margin}px)")
