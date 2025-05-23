@@ -649,13 +649,11 @@ class MainWindow(QMainWindow):
             folder_icon = qta.icon('fa5s.folder-open')
             self.open_folder_btn.setIcon(folder_icon)
             self.open_folder_btn.setIconSize(QSize(16, 16))
-            self.open_folder_btn.clicked.connect(self.open_folder_dialog)
         
         if self.open_files_btn:
             files_icon = qta.icon('fa5s.file-image')
             self.open_files_btn.setIcon(files_icon)
             self.open_files_btn.setIconSize(QSize(16, 16))
-            self.open_files_btn.clicked.connect(self.open_files_dialog)
         
         if self.stop_button:
             stop_icon = qta.icon('fa5s.stop')
@@ -665,7 +663,6 @@ class MainWindow(QMainWindow):
             self.stop_button.setStyleSheet("""
                 QPushButton:enabled { background-color: #e74c3c; }
             """)
-            self.stop_button.clicked.connect(self.on_stop_clicked)
         
         if self.color_picker_button:
             # Set the eyedropper icon to black for better visibility on light backgrounds
