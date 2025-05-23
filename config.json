@@ -2,8 +2,8 @@
     "image_processing": {
         "levels_adjustment": {
             "default": {
-                "black_point": 10,
-                "mid_point": 100,
+                "black_point": 0,
+                "mid_point": 80,
                 "white_point": 230
             },
             "recommended": {
@@ -15,12 +15,12 @@
         "unified_margin": 10,
         "save_mask": false,
         "jpg_export": {
-            "enabled": true,
+            "enabled": false,
             "quality": 90
         }
     },
     "image_cropping": {
-        "enabled": true,
+        "enabled": false,
         "detection_threshold": 30
     },
     "solid_background": {

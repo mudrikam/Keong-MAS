@@ -202,12 +202,12 @@ class RemBgWorker(QObject):
                 processing_thread.daemon = True
                 processing_thread.start()
                 
-                # Wait for processing with a timeout (30 seconds)
-                processing_succeeded = processing_complete.wait(timeout=30)
+                # Wait for processing with a timeout (300 seconds)
+                processing_succeeded = processing_complete.wait(timeout=300)
                 
                 # If the timeout was reached
                 if not processing_succeeded:
-                    print(f"WARNING: Processing timeout (30s) reached for {image_path}")
+                    print(f"WARNING: Processing timeout (300s) reached for {image_path}")
                     print(f"Skipping this image and continuing with next one")
                     return
                 
