@@ -124,9 +124,19 @@ QFrame#drop_area_frame[dragActive=&quot;true&quot;] {
       <item>
        <layout class="QHBoxLayout" name="cropControlsLayout">
         <item>
+         <widget class="QCheckBox" name="saveMaskCheckBox">
+          <property name="toolTip">
+           <string>Save the adjusted mask files</string>
+          </property>
+          <property name="text">
+           <string>Mask</string>
+          </property>
+         </widget>
+        </item>
+        <item>
          <widget class="QCheckBox" name="checkBox">
           <property name="text">
-           <string>Auto Crop Background</string>
+           <string>Crop</string>
           </property>
          </widget>
         </item>
@@ -137,7 +147,7 @@ QFrame#drop_area_frame[dragActive=&quot;true&quot;] {
         <item>
          <widget class="QCheckBox" name="solidBgCheckBox">
           <property name="text">
-           <string>Add Solid Background</string>
+           <string>Solid</string>
           </property>
          </widget>
         </item>
@@ -166,6 +176,9 @@ QFrame#drop_area_frame[dragActive=&quot;true&quot;] {
        </layout>
       </item>
       <item>
+       <layout class="QHBoxLayout" name="maskControlsLayout"/>
+      </item>
+      <item>
        <layout class="QHBoxLayout" name="unifiedMarginLayout">
         <item>
          <widget class="QLabel" name="unifiedMarginLabel">
@@ -176,6 +189,10 @@ QFrame#drop_area_frame[dragActive=&quot;true&quot;] {
         </item>
         <item>
          <widget class="QSpinBox" name="unifiedMarginSpinBox">
+          <property name="toolTip">
+           <string>Sets the margin used for cropping and solid backgrounds.
+Only applied where possible based on content.</string>
+          </property>
           <property name="minimum">
            <number>0</number>
           </property>
@@ -184,10 +201,6 @@ QFrame#drop_area_frame[dragActive=&quot;true&quot;] {
           </property>
           <property name="value">
            <number>10</number>
-          </property>
-          <property name="toolTip">
-           <string>Sets the margin used for cropping and solid backgrounds.
-Only applied where possible based on content.</string>
           </property>
          </widget>
         </item>
@@ -205,7 +218,7 @@ Only applied where possible based on content.</string>
          </size>
         </property>
        </spacer>
-      </item>      
+      </item>
       <item>
        <widget class="QPushButton" name="stopButton">
         <property name="text">

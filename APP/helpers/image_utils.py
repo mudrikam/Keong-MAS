@@ -318,9 +318,10 @@ def apply_levels_to_mask(mask_image, black_point=DEFAULT_BLACK_POINT, mid_point=
     return adjusted_mask
 
 
-def cleanup_temp_files(original_transparent_path, original_mask_path):
+def cleanup_original_temp_files(original_transparent_path, original_mask_path):
     """
-    Removes temporary files that are no longer needed after processing.
+    Removes only the original temporary files that are no longer needed after processing.
+    This doesn't touch the adjusted mask which might be needed for later operations.
     
     Args:
         original_transparent_path (str): Path to the original transparent image to remove
@@ -341,9 +342,34 @@ def cleanup_temp_files(original_transparent_path, original_mask_path):
         print(f"Warning: Failed to clean up temporary files: {str(e)}")
 
 
+def cleanup_temp_files(original_transparent_path, original_mask_path, adjusted_mask_path=None, save_mask=False):
+    """
+    Removes temporary files that are no longer needed after processing.
+    
+    Args:
+        original_transparent_path (str): Path to the original transparent image to remove
+        original_mask_path (str): Path to the original mask image to remove
+        adjusted_mask_path (str, optional): Path to the adjusted mask file
+        save_mask (bool): If True, keeps the adjusted mask, otherwise removes it
+    """
+    try:
+        # First clean up original temp files
+        cleanup_original_temp_files(original_transparent_path, original_mask_path)
+        
+        # Then handle the adjusted mask based on save_mask setting
+        if not save_mask and adjusted_mask_path and os.path.exists(adjusted_mask_path):
+            os.remove(adjusted_mask_path)
+            print(f"Removed mask file: {adjusted_mask_path} (save_mask={save_mask})")
+        elif save_mask and adjusted_mask_path and os.path.exists(adjusted_mask_path):
+            print(f"Keeping mask file: {adjusted_mask_path} (save_mask={save_mask})")
+            
+    except Exception as e:
+        print(f"Warning: Failed to clean up temporary files: {str(e)}")
+
+
 def enhance_transparency_with_levels(image_path, mask_path, output_suffix="_transparent", 
                                    black_point=DEFAULT_BLACK_POINT, mid_point=DEFAULT_MID_POINT, white_point=DEFAULT_WHITE_POINT, 
-                                   save_adjusted_mask=True, cleanup_temp_files_after=True):
+                                   save_adjusted_mask=True, cleanup_temp_files_after=True, save_mask=False):
     """
     Takes a transparent PNG image and refines its alpha channel using the mask
     with levels adjustment to control feathering.
@@ -360,6 +386,7 @@ def enhance_transparency_with_levels(image_path, mask_path, output_suffix="_tran
                           Default 255 = no change to highlights
         save_adjusted_mask (bool): Whether to save the adjusted mask as a separate file
         cleanup_temp_files_after (bool): Whether to remove temporary files after processing
+        save_mask (bool): Whether to keep the adjusted mask file after processing
         
     Returns:
         str: Path to the generated enhanced transparent image
@@ -368,6 +395,7 @@ def enhance_transparency_with_levels(image_path, mask_path, output_suffix="_tran
     print(f"- Image path: {image_path}")
     print(f"- Mask path: {mask_path}")
     print(f"- Levels: Black={black_point}, Mid={mid_point}, White={white_point}")
+    print(f"- Save mask setting: {save_mask}")
     
     try:
         # Verify files exist
@@ -456,12 +484,14 @@ def enhance_transparency_with_levels(image_path, mask_path, output_suffix="_tran
         
         # Clean up temporary files if requested
         if cleanup_temp_files_after:
-            cleanup_temp_files(image_path, mask_path)
+            cleanup_temp_files(image_path, mask_path, adjusted_mask_path, save_mask)
         
         print(f"File yang disimpan:")
         print(f"1. Gambar transparan final: {output_path}")
         if save_adjusted_mask:
             print(f"2. Mask yang diatur levels: {adjusted_mask_path}")
+            if not save_mask:
+                print(f"Note: Mask will be deleted later after crop/solid bg processing (save_mask={save_mask})")
         
         return output_path
         

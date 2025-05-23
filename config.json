@@ -12,14 +12,15 @@
                 "white_point": 235
             }
         },
-        "unified_margin": 10
+        "unified_margin": 10,
+        "save_mask": true
     },
     "image_cropping": {
         "enabled": true,
         "detection_threshold": 10
     },
     "solid_background": {
-        "enabled": false,
+        "enabled": true,
         "color": "#FFFFFF"
     },
     "app": {

@@ -30,7 +30,8 @@ from APP.helpers.config_manager import (
     get_auto_crop_enabled, set_auto_crop_enabled, 
     get_solid_bg_enabled, set_solid_bg_enabled,
     get_solid_bg_color, set_solid_bg_color,
-    get_unified_margin, set_unified_margin
+    get_unified_margin, set_unified_margin,
+    get_save_mask_enabled, set_save_mask_enabled
 )
 import json
 
@@ -179,8 +180,15 @@ class RemBgWorker(QObject):
                 self.progress.emit(70, f"Menghasilkan gambar transparan yang disempurnakan...", image_path)
                 from APP.helpers.image_utils import (
                     enhance_transparency, combine_with_mask, enhance_transparency_with_levels,
-                    get_levels_config
-                )# Get default extreme levels values for sharper edges
+                    get_levels_config, cleanup_original_temp_files
+                )
+                from APP.helpers.config_manager import get_save_mask_enabled
+                
+                # Get the save_mask setting from config
+                save_mask = get_save_mask_enabled()
+                print(f"Save mask setting from config: {save_mask}")
+                
+                # Get default extreme levels values for sharper edges
                 black_point, mid_point, white_point = get_levels_config(use_recommended=False)
                   # Rename our paths clearly for the four types of files
                 original_transparent_path = output_path  # Already saved earlier
@@ -199,12 +207,15 @@ class RemBgWorker(QObject):
                 self.progress.emit(80, f"Membuat gambar transparan dengan mask yang diatur levels...", image_path)
                 print(f"Langkah 2: Membuat gambar transparan dengan mask yang sudah diatur levels-nya...")
                 
-                # Call the enhanced function which now saves the adjusted mask separately
+                # Call the enhanced function passing the save_mask parameter
+                # Set cleanup_temp_files_after to False so we can control cleanup timing
                 enhanced_path = enhance_transparency_with_levels(
                     original_transparent_path, original_mask_path,
                     output_suffix="_transparent", 
                     black_point=black_point, mid_point=mid_point, white_point=white_point,
-                    save_adjusted_mask=True  # This will save the adjusted mask as a separate file
+                    save_adjusted_mask=True,  # Always create the adjusted mask initially
+                    cleanup_temp_files_after=False,  # Don't clean up yet - we need the mask for later steps
+                    save_mask=save_mask  # This will be used at final cleanup
                 )
                 
                 print(f"Berhasil membuat gambar dengan levels adjustment: {enhanced_path}")
@@ -269,6 +280,20 @@ class RemBgWorker(QObject):
                         print(f"Auto crop disabled (dari config.json), skipping crop step")
                 except Exception as crop_error:
                     print(f"Warning: Auto crop error: {str(crop_error)}")
+                    
+                    # Still try to do cleanup if crop failed
+                    if not save_mask:
+                        png_dir = os.path.dirname(enhanced_path) if enhanced_path else os.path.dirname(original_transparent_path)
+                        mask_path_adjusted = os.path.join(png_dir, f"{file_name}_mask_adjusted.png")
+                        if os.path.exists(mask_path_adjusted):
+                            try:
+                                os.remove(mask_path_adjusted)
+                                print(f"Removed mask file after crop error: {mask_path_adjusted}")
+                            except:
+                                pass
+                    
+                    # Always clean up the original temp files
+                    cleanup_original_temp_files(original_transparent_path, original_mask_path)
                 
                 # After processing auto crop, add solid background if enabled
                 try:
@@ -287,10 +312,56 @@ class RemBgWorker(QObject):
                     print(f"Warning: Solid background error: {str(bg_error)}")
                     import traceback
                     traceback.print_exc()
+                    
+                    # Still try to do cleanup even if solid background failed
+                    if not save_mask:
+                        png_dir = os.path.dirname(enhanced_path)
+                        mask_path_adjusted = os.path.join(png_dir, f"{file_name}_mask_adjusted.png")
+                        if os.path.exists(mask_path_adjusted):
+                            try:
+                                os.remove(mask_path_adjusted)
+                                print(f"Removed mask file after solid bg error: {mask_path_adjusted}")
+                            except:
+                                pass
+                            
+                    # Always clean up the original temp files
+                    cleanup_original_temp_files(original_transparent_path, original_mask_path)
                 
+                # Now do final cleanup after all operations that need the mask are complete
+                # Get the full mask path for cleanup
+                png_dir = os.path.dirname(enhanced_path)
+                mask_path_adjusted = os.path.join(png_dir, f"{file_name}_mask_adjusted.png")
+                
+                # Only clean up the adjusted mask if save_mask is False
+                if not save_mask and os.path.exists(mask_path_adjusted):
+                    print(f"Cleaning up adjusted mask: {mask_path_adjusted}")
+                    try:
+                        os.remove(mask_path_adjusted)
+                        print(f"Removed mask file: {mask_path_adjusted}")
+                    except Exception as rm_err:
+                        print(f"Error removing mask file: {str(rm_err)}")
+                else:
+                    print(f"Keeping mask file: {mask_path_adjusted} (save_mask={save_mask})")
+                
+                # Always clean up the original temp files
+                cleanup_original_temp_files(original_transparent_path, original_mask_path)
+                
+                # Always emit the path to the final transparent PNG for preview
+                png_dir = os.path.dirname(enhanced_path)
+                final_transparent_path = os.path.join(png_dir, f"{file_name}_transparent.png")
+                
+                # If the final transparent PNG exists, use it for preview
+                if os.path.exists(final_transparent_path):
+                    self.file_completed.emit(final_transparent_path)
+                    print(f"Emitting file_completed with final transparent PNG: {final_transparent_path}")
+                else:
+                    # Fallback to the enhanced path if the final transparent doesn't exist
+                    self.file_completed.emit(enhanced_path if enhanced_path else original_transparent_path)
+                    print(f"Emitting file_completed with fallback path: {enhanced_path}")
+                    
                 model_info = f" (model: {model_name})" if 'model_name' in locals() else ""
                 print(f"Semua pemrosesan selesai{model_info}")
-                self.file_completed.emit(enhanced_path if enhanced_path else original_transparent_path)
+                
             except Exception as e:
                 print(f"Error saat membuat gambar transparan: {str(e)}")
                 enhanced_path = None
@@ -539,6 +610,27 @@ class MainWindow(QMainWindow):
             # Connect signal
             self.unified_margin_spinbox.valueChanged.connect(self.on_unified_margin_changed)
         
+        # Connect the save mask checkbox
+        self.save_mask_checkbox = self.ui.findChild(QCheckBox, "saveMaskCheckBox")
+        if self.save_mask_checkbox:
+            # Set up tooltip
+            self.save_mask_checkbox.setToolTip(
+                "Ketika diaktifkan, file mask akan disimpan bersama output gambar.\n"
+                "Jika dinonaktifkan, file mask akan dihapus."
+            )
+            
+            # Load and set initial state
+            is_save_mask_enabled = get_save_mask_enabled()
+            print(f"Initial save mask setting from config.json: {is_save_mask_enabled}")
+            
+            # Block signals during initial setup
+            self.save_mask_checkbox.blockSignals(True)
+            self.save_mask_checkbox.setChecked(is_save_mask_enabled)
+            self.save_mask_checkbox.blockSignals(False)
+            
+            # Connect the signal
+            self.save_mask_checkbox.stateChanged.connect(self.on_save_mask_changed)
+        
         # Worker thread for processing
         self.worker = None
         self.thread = None
@@ -675,6 +767,28 @@ class MainWindow(QMainWindow):
             print(f"Error setting unified margin: {str(e)}")
             import traceback
             traceback.print_exc()
+
+    def on_save_mask_changed(self, state):
+        """Handle save mask checkbox state change"""
+        is_checked = (state != 0)  # Consider anything not "Unchecked" as checked
+        
+        print(f"Save mask checkbox changed - Raw state: {state}, Interpreted as: {'checked' if is_checked else 'unchecked'}")
+        
+        try:
+            # Update the config
+            if set_save_mask_enabled(is_checked):
+                print(f"Save mask {'enabled' if is_checked else 'disabled'} and saved to config")
+                print(f"Save mask {'diaktifkan' if is_checked else 'dinonaktifkan'} dan disimpan")
+                
+                # Verify setting
+                current = get_save_mask_enabled()
+                if current != is_checked:
+                    print(f"WARNING: Config value doesn't match expected value!")
+                    self.save_mask_checkbox.blockSignals(True)
+                    self.save_mask_checkbox.setChecked(current)
+                    self.save_mask_checkbox.blockSignals(False)
+        except Exception as e:
+            print(f"Error updating save mask setting: {str(e)}")
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -819,10 +933,24 @@ class MainWindow(QMainWindow):
                 self.drop_area.height() - (margins * 2)
             )
             
+            print(f"Attempting to load preview image from: {file_path}")
+            
             # Load the image and show it
             if self.preview_image.setImagePath(file_path):
                 self.preview_image.show()
                 print(f"Showing final preview for: {os.path.basename(file_path)}")
+            else:
+                print(f"Failed to load preview image from: {file_path}")
+                
+                # Try finding alternative paths if the main one fails
+                if "_transparent.png" not in file_path:
+                    base_dir = os.path.dirname(file_path)
+                    file_name = os.path.splitext(os.path.basename(file_path))[0]
+                    alt_path = os.path.join(base_dir, f"{file_name}_transparent.png")
+                    
+                    if os.path.exists(alt_path) and self.preview_image.setImagePath(alt_path):
+                        self.preview_image.show()
+                        print(f"Showing alternative preview for: {os.path.basename(alt_path)}")
 
     def resizeEvent(self, event):
         """Event that triggers when the main window is resized"""

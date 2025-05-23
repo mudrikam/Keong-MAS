@@ -25,7 +25,8 @@ DEFAULT_CONFIG = {
                 "white_point": 235
             }
         },
-        "unified_margin": 10  # Unified margin setting for all operations
+        "unified_margin": 10,  # Unified margin setting for all operations
+        "save_mask": True  # Default setting for saving mask files
     },
     "image_cropping": {
         "enabled": False,
@@ -259,3 +260,47 @@ def get_crop_threshold():
     margin = get_unified_margin()
     logger.info(f"get_crop_threshold called, returning unified margin: {margin}px")
     return margin
+
+def get_save_mask_enabled():
+    """
+    Gets whether mask files should be saved
+    
+    Returns:
+        bool: True if mask files should be saved, False otherwise
+    """
+    try:
+        config = load_config()
+        # Explicitly check if the value exists, otherwise return the default
+        if "image_processing" in config and "save_mask" in config["image_processing"]:
+            return config["image_processing"]["save_mask"]
+        return False  # Default to False if not specified
+    except Exception as e:
+        print(f"Error getting save_mask setting: {str(e)}")
+        return False  # Default to False on error
+
+def set_save_mask_enabled(enabled):
+    """
+    Sets whether mask files should be saved
+    
+    Args:
+        enabled (bool): True to save mask files, False to delete them
+        
+    Returns:
+        bool: True if the setting was successfully saved, False otherwise
+    """
+    try:
+        config = load_config()
+        
+        # Ensure the required structure exists
+        if "image_processing" not in config:
+            config["image_processing"] = {}
+            
+        # Update the setting
+        config["image_processing"]["save_mask"] = enabled
+        
+        # Save the updated config
+        save_config(config)
+        return True
+    except Exception as e:
+        print(f"Error setting save_mask: {str(e)}")
+        return False
