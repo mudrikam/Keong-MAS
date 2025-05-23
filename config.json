@@ -20,8 +20,8 @@
         "detection_threshold": 30
     },
     "solid_background": {
-        "enabled": true,
-        "color": "#E24C4F"
+        "enabled": false,
+        "color": "#FFFFFF"
     },
     "app": {
         "show_success_stats": true
