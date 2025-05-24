@@ -13,19 +13,19 @@
             }
         },
         "unified_margin": 10,
-        "save_mask": true,
+        "save_mask": false,
         "jpg_export": {
-            "enabled": true,
+            "enabled": false,
             "quality": 90
         }
     },
     "image_cropping": {
-        "enabled": true,
+        "enabled": false,
         "detection_threshold": 30
     },
     "solid_background": {
-        "enabled": true,
-        "color": "#58FF6B"
+        "enabled": false,
+        "color": "#FFFFFF"
     },
     "app": {
         "show_success_stats": true
