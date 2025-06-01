@@ -12,6 +12,7 @@ from APP.helpers.config_manager import (
     get_solid_bg_color,
     get_solid_bg_margin
 )
+from APP.helpers.cleanup_manager import intelligent_cleanup_after_all_operations
 
 # Setup basic logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -340,6 +341,10 @@ def add_solid_background(image_path, output_path=None, bg_color=None, margin=Non
         # 5. Save the final composited image
         result.save(output_path)
         logger.info(f"Saved image with solid background to {output_path}")
+        
+        # INTELLIGENT CLEANUP: Check if this is the final operation and cleanup if needed
+        logger.info("SOLID BG: Checking if intelligent cleanup should run after solid background...")
+        intelligent_cleanup_after_all_operations(output_path, ["solid_background"])
         
         return output_path
         

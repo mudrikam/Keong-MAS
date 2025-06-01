@@ -9,6 +9,7 @@ import re
 from PIL import Image
 
 from APP.helpers.config_manager import get_jpg_export_enabled, get_jpg_quality, get_solid_bg_enabled
+from APP.helpers.cleanup_manager import intelligent_cleanup_after_all_operations
 
 # Setup basic logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -32,6 +33,9 @@ def convert_to_jpg(image_path, output_path=None, quality=None):
             logger.info("JPG export is disabled in config")
             return None
             
+        # Import config functions we need
+        from APP.helpers.config_manager import get_auto_crop_enabled
+        
         # Use config value if quality not provided
         if quality is None:
             quality = get_jpg_quality()
@@ -78,35 +82,51 @@ def convert_to_jpg(image_path, output_path=None, quality=None):
         os.makedirs(jpg_dir, exist_ok=True)
         logger.info(f"JPG output directory: {jpg_dir}")
         
-        # Determine input path based on whether solid background is enabled
+        # Determine input path based on config settings
         solid_bg_enabled = get_solid_bg_enabled()
+        crop_enabled = get_auto_crop_enabled()
+        
+        input_path = None
+        
+        # Priority order based on enabled features:
+        # 1. If both solid BG and crop are enabled: use solid background version (it should be cropped already)
+        # 2. If only solid BG enabled: use solid background version  
+        # 3. If only crop enabled: use transparent version (it should be cropped already)
+        # 4. If neither enabled: use transparent version
         
         if solid_bg_enabled:
-            # Try to use solid background version first
-            solid_bg_path = os.path.join(png_dir, f"{file_name}_solid_background.png")
-            if os.path.exists(solid_bg_path):
-                input_path = solid_bg_path
-                logger.info(f"Using solid background image: {os.path.basename(input_path)}")
-            else:
-                # Fallback to transparent version with white background
-                transparent_path = os.path.join(png_dir, f"{file_name}_transparent.png") 
-                if os.path.exists(transparent_path):
-                    input_path = transparent_path
-                    logger.info(f"Solid background not found, using transparent with white background: {os.path.basename(input_path)}")
-                else:
-                    # Final fallback to provided path
-                    input_path = image_path
-                    logger.info(f"Using provided image path: {os.path.basename(input_path)}")
-        else:
-            # When solid background is disabled, use transparent version
-            transparent_path = os.path.join(png_dir, f"{file_name}_transparent.png")
-            if os.path.exists(transparent_path):
-                input_path = transparent_path
-                logger.info(f"Solid background disabled, using transparent with white background: {os.path.basename(input_path)}")
-            else:
-                # Fallback to provided path
-                input_path = image_path
-                logger.info(f"Using provided image path: {os.path.basename(input_path)}")
+            # Look for solid background version with or without timestamp
+            patterns_to_try = [
+                os.path.join(png_dir, f"{file_name}_solid_background_{timestamp_id}.png"),
+                os.path.join(png_dir, f"{file_name}_solid_background.png")
+            ]
+            
+            for pattern in patterns_to_try:
+                if os.path.exists(pattern):
+                    input_path = pattern
+                    logger.info(f"Using solid background image: {os.path.basename(input_path)}")
+                    break
+        
+        # If no solid background found or solid BG disabled, look for transparent version
+        if not input_path:
+            patterns_to_try = [
+                os.path.join(png_dir, f"{file_name}_transparent_{timestamp_id}.png"),
+                os.path.join(png_dir, f"{file_name}_transparent.png")
+            ]
+            
+            for pattern in patterns_to_try:
+                if os.path.exists(pattern):
+                    input_path = pattern
+                    if crop_enabled:
+                        logger.info(f"Using transparent image (should be cropped): {os.path.basename(input_path)}")
+                    else:
+                        logger.info(f"Using transparent image (not cropped): {os.path.basename(input_path)}")
+                    break
+        
+        # Final fallback to provided path
+        if not input_path:
+            input_path = image_path
+            logger.info(f"Using provided image path as fallback: {os.path.basename(input_path)}")
         
         # Create output path in JPG directory if not provided
         if output_path is None:
@@ -134,6 +154,12 @@ def convert_to_jpg(image_path, output_path=None, quality=None):
         img.save(output_path, "JPEG", quality=quality, optimize=True)
         
         logger.info(f"Saved JPG: {output_path} (quality={quality})")
+        logger.info(f"Config: crop_enabled={crop_enabled}, solid_bg_enabled={solid_bg_enabled}")
+        
+        # INTELLIGENT CLEANUP: Check if this is the final operation and cleanup if needed
+        logger.info("JPG: Checking if intelligent cleanup should run after JPG conversion...")
+        intelligent_cleanup_after_all_operations(output_path, ["jpg_export"])
+        
         return output_path
         
     except Exception as e:
@@ -161,4 +187,11 @@ def process_jpg_conversion(image_path):
         logger.info("JPG export is disabled in config")
         return None
     
-    return convert_to_jpg(image_path)
+    result = convert_to_jpg(image_path)
+    
+    # If this is being called directly (not from convert_to_jpg), also check for cleanup
+    if result:
+        logger.info("JPG PROCESS: Checking if intelligent cleanup should run after JPG processing...")
+        intelligent_cleanup_after_all_operations(result, ["jpg_export"])
+    
+    return result
