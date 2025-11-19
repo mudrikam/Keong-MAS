@@ -1,0 +1,845 @@
+"""Main window class for Keong-MAS application."""
+
+import os
+import sys
+import webbrowser
+import subprocess
+from PySide6.QtCore import Qt, QThread, QTimer, QSize
+from PySide6.QtGui import QIcon, QColor
+from PySide6.QtWidgets import (
+    QMainWindow, QProgressBar, QMessageBox, QFileDialog, QColorDialog
+)
+import qtawesome as qta
+
+from APP.ui import create_main_ui
+from APP.widgets import ScalableImageLabel, FileTableWidget, ImagePreviewWidget
+from APP.workers import RemBgWorker
+from APP.helpers.database import DatabaseManager
+from APP.helpers.config_manager import (
+    get_auto_crop_enabled, set_auto_crop_enabled,
+    get_solid_bg_enabled, set_solid_bg_enabled,
+    get_solid_bg_color, set_solid_bg_color,
+    get_unified_margin, set_unified_margin,
+    get_save_mask_enabled, set_save_mask_enabled,
+    get_jpg_export_enabled, set_jpg_export_enabled,
+    get_jpg_quality, set_jpg_quality,
+    get_output_location, set_output_location,
+    get_levels_black_point, set_levels_black_point,
+    get_levels_mid_point, set_levels_mid_point,
+    get_levels_white_point, set_levels_white_point
+)
+
+
+class MainWindow(QMainWindow):
+    """Main application window."""
+    
+    WINDOW_TITLE = "Keong MAS (Kecilin Ongkos, Masking Auto Selesai)"
+    DEFAULT_SIZE = (800, 550)
+    WHATSAPP_GROUP_LINK = "https://chat.whatsapp.com/CMQvDxpCfP647kBBA6dRn3"
+    
+    def __init__(self):
+        super().__init__()
+        self._init_window()
+        self._init_ui()
+        self._init_connections()
+        self._load_settings()
+        
+        self.worker = None
+        self.thread = None
+        self.last_processed_files = []
+        
+        # Database for session tracking
+        db_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+            "sessions.db"
+        )
+        self.db = DatabaseManager(db_path)
+        self.current_session_id = None
+        self.file_id_map = {}  # row_index -> file_id
+        
+    def _init_window(self):
+        """Initialize window properties."""
+        self.setWindowTitle(self.WINDOW_TITLE)
+        self.resize(*self.DEFAULT_SIZE)
+        self.setAcceptDrops(True)
+        
+        icon_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+            "APP", "res", "Keong-MAS.ico"
+        )
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
+    
+    def _init_ui(self):
+        """Initialize UI components."""
+        central_widget, ui_dict = create_main_ui(self)
+        self.setCentralWidget(central_widget)
+        
+        self.ui = type('UI', (), ui_dict)()
+        
+        self.drop_area = self.ui.drop_area_frame
+        self.split_view = self.ui.split_view
+        self.file_table = self.ui.file_table
+        self.image_preview = self.ui.image_preview
+        
+        self.dnd_label_1 = self.ui.dnd_label_1
+        self.dnd_label_2 = self.ui.dnd_label_2
+        self.dnd_label_3 = self.ui.dnd_label_3
+        
+        if self.dnd_label_1 and self.dnd_label_2 and self.dnd_label_3:
+            self.original_label1_text = self.dnd_label_1.text()
+            self.original_label2_text = self.dnd_label_2.text()
+            self.original_label3_text = self.dnd_label_3.text()
+        
+        # Make DND area clickable
+        self.drop_area.mousePressEvent = self._on_dnd_area_clicked
+        
+        # Connect table and preview signals
+        self.file_table.file_selected.connect(self._on_file_selected)
+        self.file_table.file_double_clicked.connect(self._on_file_double_clicked)
+        
+        # Connect preview double-click signal
+        self.image_preview.file_double_clicked.connect(self._on_file_double_clicked)
+        
+        # Disable context menu for preview
+        self.image_preview.view.setContextMenuPolicy(Qt.NoContextMenu)
+        
+        self._setup_preview_image()
+        self._setup_progress_bar()
+        self._setup_button_icons()
+    
+    def _setup_preview_image(self):
+        """Setup the image preview widget."""
+        self.preview_image = ScalableImageLabel(self.drop_area)
+        margins = 20
+        self.preview_image.setGeometry(
+            margins,
+            margins + 40,
+            self.drop_area.width() - (margins * 2),
+            self.drop_area.height() - (margins * 2) - 80
+        )
+        self.preview_image.hide()
+    
+    def _setup_progress_bar(self):
+        """Setup the progress bar."""
+        self.progress_bar = QProgressBar(self.centralWidget())
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setFormat("%p% - %v / %m")
+        self.progress_bar.hide()
+        
+        parent_layout = self.drop_area.parentWidget().layout()
+        drop_area_index = parent_layout.indexOf(self.drop_area)
+        parent_layout.insertWidget(drop_area_index, self.progress_bar)
+    
+    def _setup_button_icons(self):
+        """Setup icons for all buttons."""
+        icon_size = QSize(16, 16)
+        
+        if hasattr(self.ui, 'openFolder') and self.ui.openFolder:
+            self.ui.openFolder.setIcon(qta.icon('fa5s.folder-open'))
+            self.ui.openFolder.setIconSize(icon_size)
+        
+        if hasattr(self.ui, 'openFiles') and self.ui.openFiles:
+            self.ui.openFiles.setIcon(qta.icon('fa5s.images'))
+            self.ui.openFiles.setIconSize(icon_size)
+        
+        if hasattr(self.ui, 'outputLocationButton') and self.ui.outputLocationButton:
+            self.ui.outputLocationButton.setIcon(qta.icon('fa5s.folder'))
+            self.ui.outputLocationButton.setIconSize(icon_size)
+        
+        if hasattr(self.ui, 'stopButton') and self.ui.stopButton:
+            self.ui.stopButton.setIcon(qta.icon('fa5s.stop', color='red'))
+            self.ui.stopButton.setIconSize(QSize(18, 18))
+            self.ui.stopButton.setEnabled(False)
+        
+        if hasattr(self.ui, 'repeatButton') and self.ui.repeatButton:
+            self.ui.repeatButton.setIcon(qta.icon('fa5s.redo'))
+            self.ui.repeatButton.setIconSize(QSize(18, 18))
+            self.ui.repeatButton.setEnabled(False)
+        
+        if hasattr(self.ui, 'resetButton') and self.ui.resetButton:
+            self.ui.resetButton.setIcon(qta.icon('fa5s.times-circle'))
+            self.ui.resetButton.setIconSize(QSize(18, 18))
+        
+        if hasattr(self.ui, 'colorPickerButton') and self.ui.colorPickerButton:
+            color_hex = get_solid_bg_color()
+            self._update_color_button(color_hex)
+        
+        if hasattr(self.ui, 'whatsappButton') and self.ui.whatsappButton:
+            self.ui.whatsappButton.setIcon(qta.icon('fa5b.whatsapp', color='#25D366'))
+            self.ui.whatsappButton.setIconSize(icon_size)
+    
+    def _init_connections(self):
+        """Initialize signal-slot connections."""
+        if hasattr(self.ui, 'openFolder') and self.ui.openFolder:
+            self.ui.openFolder.clicked.connect(self._open_folder_dialog)
+        
+        if hasattr(self.ui, 'openFiles') and self.ui.openFiles:
+            self.ui.openFiles.clicked.connect(self._open_files_dialog)
+        
+        if hasattr(self.ui, 'stopButton') and self.ui.stopButton:
+            self.ui.stopButton.clicked.connect(self._on_stop_clicked)
+        
+        if hasattr(self.ui, 'repeatButton') and self.ui.repeatButton:
+            self.ui.repeatButton.clicked.connect(self._on_repeat_clicked)
+        
+        if hasattr(self.ui, 'resetButton') and self.ui.resetButton:
+            self.ui.resetButton.clicked.connect(self._on_reset_clicked)
+        
+        if hasattr(self.ui, 'checkBox') and self.ui.checkBox:
+            self.ui.checkBox.stateChanged.connect(self._on_auto_crop_changed)
+        
+        if hasattr(self.ui, 'solidBgCheckBox') and self.ui.solidBgCheckBox:
+            self.ui.solidBgCheckBox.stateChanged.connect(self._on_solid_bg_changed)
+        
+        if hasattr(self.ui, 'colorPickerButton') and self.ui.colorPickerButton:
+            self.ui.colorPickerButton.clicked.connect(self._on_color_picker_clicked)
+        
+        if hasattr(self.ui, 'unifiedMarginSpinBox') and self.ui.unifiedMarginSpinBox:
+            self.ui.unifiedMarginSpinBox.valueChanged.connect(self._on_unified_margin_changed)
+        
+        if hasattr(self.ui, 'saveMaskCheckBox') and self.ui.saveMaskCheckBox:
+            self.ui.saveMaskCheckBox.stateChanged.connect(self._on_save_mask_changed)
+        
+        if hasattr(self.ui, 'jpgExportCheckBox') and self.ui.jpgExportCheckBox:
+            self.ui.jpgExportCheckBox.stateChanged.connect(self._on_jpg_export_changed)
+        
+        if hasattr(self.ui, 'jpgQualitySpinBox') and self.ui.jpgQualitySpinBox:
+            self.ui.jpgQualitySpinBox.valueChanged.connect(self._on_jpg_quality_changed)
+        
+        if hasattr(self.ui, 'blackPointSlider') and self.ui.blackPointSlider:
+            self.ui.blackPointSlider.valueChanged.connect(self._on_black_point_changed)
+        
+        if hasattr(self.ui, 'midPointSlider') and self.ui.midPointSlider:
+            self.ui.midPointSlider.valueChanged.connect(self._on_mid_point_changed)
+        
+        if hasattr(self.ui, 'whitePointSlider') and self.ui.whitePointSlider:
+            self.ui.whitePointSlider.valueChanged.connect(self._on_white_point_changed)
+        
+        if hasattr(self.ui, 'outputLocationButton') and self.ui.outputLocationButton:
+            self.ui.outputLocationButton.clicked.connect(self._on_output_location_clicked)
+        
+        if hasattr(self.ui, 'clearOutputButton') and self.ui.clearOutputButton:
+            self.ui.clearOutputButton.clicked.connect(self._on_clear_output_clicked)
+        
+        if hasattr(self.ui, 'whatsappButton') and self.ui.whatsappButton:
+            self.ui.whatsappButton.clicked.connect(self._open_whatsapp)
+    
+    def _load_settings(self):
+        """Load settings from config and apply to UI."""
+        if hasattr(self.ui, 'checkBox') and self.ui.checkBox:
+            self.ui.checkBox.setChecked(get_auto_crop_enabled())
+        
+        if hasattr(self.ui, 'solidBgCheckBox') and self.ui.solidBgCheckBox:
+            self.ui.solidBgCheckBox.setChecked(get_solid_bg_enabled())
+            self._update_solid_bg_controls()
+        
+        if hasattr(self.ui, 'unifiedMarginSpinBox') and self.ui.unifiedMarginSpinBox:
+            self.ui.unifiedMarginSpinBox.setValue(get_unified_margin())
+        
+        if hasattr(self.ui, 'saveMaskCheckBox') and self.ui.saveMaskCheckBox:
+            self.ui.saveMaskCheckBox.setChecked(get_save_mask_enabled())
+        
+        if hasattr(self.ui, 'jpgExportCheckBox') and self.ui.jpgExportCheckBox:
+            self.ui.jpgExportCheckBox.setChecked(get_jpg_export_enabled())
+        
+        if hasattr(self.ui, 'jpgQualitySpinBox') and self.ui.jpgQualitySpinBox:
+            self.ui.jpgQualitySpinBox.setValue(get_jpg_quality())
+            self._update_jpg_quality_controls()
+        
+        if hasattr(self.ui, 'blackPointSlider') and self.ui.blackPointSlider:
+            black_point = get_levels_black_point()
+            self.ui.blackPointSlider.setValue(black_point)
+            if hasattr(self.ui, 'blackPointValue'):
+                self.ui.blackPointValue.setText(str(black_point))
+        
+        if hasattr(self.ui, 'midPointSlider') and self.ui.midPointSlider:
+            mid_point = get_levels_mid_point()
+            self.ui.midPointSlider.setValue(mid_point)
+            if hasattr(self.ui, 'midPointValue'):
+                self.ui.midPointValue.setText(str(mid_point))
+        
+        if hasattr(self.ui, 'whitePointSlider') and self.ui.whitePointSlider:
+            white_point = get_levels_white_point()
+            self.ui.whitePointSlider.setValue(white_point)
+            if hasattr(self.ui, 'whitePointValue'):
+                self.ui.whitePointValue.setText(str(white_point))
+        
+        self._update_output_location_display()
+    
+    def _update_output_location_display(self):
+        """Update the output location button text based on current setting."""
+        output_location = get_output_location()
+        if hasattr(self.ui, 'outputLocationButton') and self.ui.outputLocationButton:
+            if output_location:
+                folder_name = os.path.basename(output_location)
+                display_text = f" {folder_name[:12]}..." if len(folder_name) > 12 else f" {folder_name}"
+                self.ui.outputLocationButton.setText(display_text)
+                self.ui.outputLocationButton.setToolTip(f"Output saat ini: {output_location}\nKlik untuk ubah")
+            else:
+                self.ui.outputLocationButton.setText(" Folder Output")
+                self.ui.outputLocationButton.setToolTip("Pilih lokasi output (kosongkan untuk default: folder PNG)")
+        
+        if hasattr(self.ui, 'clearOutputButton') and self.ui.clearOutputButton:
+            self.ui.clearOutputButton.setEnabled(bool(output_location))
+    
+    def _on_black_point_changed(self, value):
+        """Handle black point slider change."""
+        try:
+            set_levels_black_point(value)
+            if hasattr(self.ui, 'blackPointValue'):
+                self.ui.blackPointValue.setText(str(value))
+            print(f"Black point set to: {value}")
+        except Exception as e:
+            print(f"Error saving black point: {str(e)}")
+    
+    def _on_mid_point_changed(self, value):
+        """Handle mid point slider change."""
+        try:
+            set_levels_mid_point(value)
+            if hasattr(self.ui, 'midPointValue'):
+                self.ui.midPointValue.setText(str(value))
+            print(f"Mid point set to: {value}")
+        except Exception as e:
+            print(f"Error saving mid point: {str(e)}")
+    
+    def _on_white_point_changed(self, value):
+        """Handle white point slider change."""
+        try:
+            set_levels_white_point(value)
+            if hasattr(self.ui, 'whitePointValue'):
+                self.ui.whitePointValue.setText(str(value))
+            print(f"White point set to: {value}")
+        except Exception as e:
+            print(f"Error saving white point: {str(e)}")
+    
+    def _update_color_button(self, color_hex):
+        """Update color picker button background."""
+        if hasattr(self.ui, 'colorPickerButton') and self.ui.colorPickerButton:
+            self.ui.colorPickerButton.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {color_hex};
+                    border: 1px solid #888;
+                    border-radius: 4px;
+                }}
+            """)
+    
+    def _update_solid_bg_controls(self):
+        """Update enabled state of solid background controls."""
+        if hasattr(self.ui, 'solidBgCheckBox') and self.ui.solidBgCheckBox:
+            is_enabled = self.ui.solidBgCheckBox.isChecked()
+            
+            if hasattr(self.ui, 'colorPickerButton') and self.ui.colorPickerButton:
+                self.ui.colorPickerButton.setEnabled(is_enabled)
+    
+    def _update_jpg_quality_controls(self):
+        """Update enabled state of JPG quality controls."""
+        if hasattr(self.ui, 'jpgExportCheckBox') and self.ui.jpgExportCheckBox:
+            is_enabled = self.ui.jpgExportCheckBox.isChecked()
+            
+            if hasattr(self.ui, 'jpgQualitySpinBox') and self.ui.jpgQualitySpinBox:
+                self.ui.jpgQualitySpinBox.setEnabled(is_enabled)
+            
+            if hasattr(self.ui, 'jpgQualityLabel') and self.ui.jpgQualityLabel:
+                self.ui.jpgQualityLabel.setEnabled(is_enabled)
+    
+    def _on_auto_crop_changed(self, state):
+        """Handle auto crop checkbox state change."""
+        is_checked = (state != 0)
+        print(f"Auto crop checkbox changed - Interpreted as: {'checked' if is_checked else 'unchecked'}")
+        
+        try:
+            set_auto_crop_enabled(is_checked)
+            print(f"Auto crop setting saved successfully: {is_checked}")
+        except Exception as e:
+            print(f"Error saving auto crop setting: {str(e)}")
+            QMessageBox.warning(self, "Error", f"Gagal menyimpan pengaturan potong otomatis: {str(e)}")
+    
+    def _on_solid_bg_changed(self, state):
+        """Handle solid background checkbox state change."""
+        is_checked = (state != 0)
+        print(f"Solid background checkbox changed - Interpreted as: {'checked' if is_checked else 'unchecked'}")
+        
+        try:
+            set_solid_bg_enabled(is_checked)
+            self._update_solid_bg_controls()
+            print(f"Solid background setting saved successfully: {is_checked}")
+        except Exception as e:
+            print(f"Error saving solid background setting: {str(e)}")
+            QMessageBox.warning(self, "Error", f"Gagal menyimpan pengaturan background solid: {str(e)}")
+    
+    def _on_color_picker_clicked(self):
+        """Open color picker dialog."""
+        try:
+            current_color_hex = get_solid_bg_color()
+            current_color = QColor(current_color_hex)
+            
+            color = QColorDialog.getColor(current_color, self, "Pilih Warna Background")
+            
+            if color.isValid():
+                color_hex = color.name().upper()
+                set_solid_bg_color(color_hex)
+                self._update_color_button(color_hex)
+                print(f"Background color changed to: {color_hex}")
+        except Exception as e:
+            print(f"Error in color picker: {str(e)}")
+            QMessageBox.warning(self, "Error", f"Gagal mengubah warna: {str(e)}")
+    
+    def _on_unified_margin_changed(self, value):
+        """Handle unified margin spinbox value change."""
+        try:
+            set_unified_margin(value)
+            print(f"Unified margin set to: {value}px")
+        except Exception as e:
+            print(f"Error saving unified margin: {str(e)}")
+    
+    def _on_save_mask_changed(self, state):
+        """Handle save mask checkbox state change."""
+        is_checked = (state != 0)
+        print(f"Save mask checkbox changed - Interpreted as: {'checked' if is_checked else 'unchecked'}")
+        
+        try:
+            set_save_mask_enabled(is_checked)
+            print(f"Save mask setting saved successfully: {is_checked}")
+        except Exception as e:
+            print(f"Error saving save mask setting: {str(e)}")
+            QMessageBox.warning(self, "Error", f"Gagal menyimpan pengaturan mask: {str(e)}")
+    
+    def _on_jpg_export_changed(self, state):
+        """Handle JPG export checkbox state change."""
+        is_checked = (state != 0)
+        print(f"JPG export checkbox changed - Interpreted as: {'checked' if is_checked else 'unchecked'}")
+        
+        try:
+            set_jpg_export_enabled(is_checked)
+            self._update_jpg_quality_controls()
+            print(f"JPG export setting saved successfully: {is_checked}")
+        except Exception as e:
+            print(f"Error saving JPG export setting: {str(e)}")
+            QMessageBox.warning(self, "Error", f"Gagal menyimpan pengaturan ekspor JPG: {str(e)}")
+    
+    def _on_jpg_quality_changed(self, value):
+        """Handle JPG quality spinbox value change."""
+        try:
+            set_jpg_quality(value)
+            print(f"JPG quality set to: {value}")
+        except Exception as e:
+            print(f"Error saving JPG quality: {str(e)}")
+    
+    def _on_output_location_clicked(self):
+        """Handle output location button click."""
+        current_location = get_output_location()
+        start_dir = current_location if current_location else os.path.expanduser("~")
+        
+        folder_path = QFileDialog.getExistingDirectory(
+            self,
+            "Pilih Folder Output",
+            start_dir,
+            QFileDialog.ShowDirsOnly
+        )
+        
+        if folder_path:
+            set_output_location(folder_path)
+            self._update_output_location_display()
+            print(f"Output location set to: {folder_path}")
+    
+    def _on_clear_output_clicked(self):
+        """Clear output location to use default."""
+        set_output_location(None)
+        self._update_output_location_display()
+        print("Output location cleared - using default PNG folder")
+    
+    def _open_whatsapp(self):
+        """Open WhatsApp group link."""
+        try:
+            webbrowser.open(self.WHATSAPP_GROUP_LINK)
+            print(f"Opened WhatsApp link: {self.WHATSAPP_GROUP_LINK}")
+        except Exception as e:
+            print(f"Error opening WhatsApp: {str(e)}")
+            QMessageBox.warning(self, "Error", f"Gagal membuka WhatsApp: {str(e)}")
+    
+    def _open_folder_dialog(self):
+        """Handle open folder button click."""
+        folder_path = QFileDialog.getExistingDirectory(
+            self,
+            "Pilih Folder Gambar",
+            os.path.expanduser("~"),
+            QFileDialog.ShowDirsOnly
+        )
+        
+        if folder_path:
+            self._reset_ui_state()
+            self._process_files([folder_path])
+    
+    def _open_files_dialog(self):
+        """Handle open files button click."""
+        file_paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Pilih Gambar",
+            os.path.expanduser("~"),
+            "Gambar (*.jpg *.jpeg *.png *.bmp *.webp)"
+        )
+        
+        if file_paths:
+            self._reset_ui_state()
+            self._process_files(file_paths)
+    
+    def _on_stop_clicked(self):
+        """Handle stop button click."""
+        if self.worker:
+            self.worker.abort = True
+            print("Stop requested - aborting current operation")
+            
+            if hasattr(self.ui, 'stopButton') and self.ui.stopButton:
+                self.ui.stopButton.setEnabled(False)
+            
+            QTimer.singleShot(100, self._finalize_stop)
+    
+    def _finalize_stop(self):
+        """Finalize the stop operation."""
+        if self.thread and self.thread.isRunning():
+            self.thread.quit()
+            if not self.thread.wait(3000):
+                self.thread.terminate()
+                self.thread.wait()
+        
+        self.thread = None
+        self.worker = None
+        
+        self.progress_bar.hide()
+        self._reset_ui_state()
+        
+        QMessageBox.information(self, "Dihentikan", "Proses dihentikan oleh pengguna")
+    
+    def _on_repeat_clicked(self):
+        """Handle repeat button click."""
+        if self.last_processed_files:
+            self._reset_ui_state()
+            self._process_files(self.last_processed_files)
+    
+    def _process_files(self, file_paths):
+        """Start processing files."""
+        self.last_processed_files = file_paths.copy()
+        
+        # Create session in database
+        output_dir = get_output_location()
+        self.current_session_id = self.db.create_session(output_dir)
+        
+        # Store output_dir for later use in _get_output_path
+        self.current_output_dir = output_dir
+        
+        # Hide DND area, show split view
+        self.drop_area.hide()
+        self.split_view.show()
+        
+        if hasattr(self.ui, 'resetButton') and self.ui.resetButton:
+            self.ui.resetButton.show()
+        
+        # Populate table
+        self.file_table.clear_all()
+        self.file_id_map.clear()
+        
+        for idx, file_path in enumerate(file_paths):
+            try:
+                file_size = os.path.getsize(file_path)
+            except:
+                file_size = 0
+            
+            file_id = self.db.add_file(self.current_session_id, file_path, file_size)
+            self.file_table.add_file(file_path, file_id)
+            self.file_id_map[idx] = file_id
+        
+        # Auto select first row to show preview
+        if self.file_table.rowCount() > 0:
+            self.file_table.selectRow(0)
+            first_file_path = self.file_table.get_file_path(0)
+            if first_file_path:
+                # Show before image immediately
+                print(f"Auto-selecting first file: {first_file_path}")
+                self.image_preview.set_images(first_file_path, None)
+        
+        self.progress_bar.show()
+        self.progress_bar.setValue(0)
+        
+        if hasattr(self.ui, 'stopButton') and self.ui.stopButton:
+            self.ui.stopButton.setEnabled(True)
+        
+        if hasattr(self.ui, 'repeatButton') and self.ui.repeatButton:
+            self.ui.repeatButton.setEnabled(False)
+        
+        self.worker = RemBgWorker(file_paths, output_dir=output_dir)
+        self.thread = QThread()
+        self.worker.moveToThread(self.thread)
+        
+        self.thread.started.connect(self.worker.process_files)
+        self.worker.finished.connect(self._on_processing_finished)
+        self.worker.progress.connect(self._update_progress)
+        self.worker.file_completed.connect(self._on_file_completed)
+        
+        self.thread.start()
+    
+    def _update_progress(self, value, message="", current_file_path=None):
+        """Update progress bar."""
+        self.progress_bar.setValue(value)
+        
+        # Find row index for current file
+        if current_file_path:
+            for row in range(self.file_table.rowCount()):
+                if self.file_table.get_file_path(row) == current_file_path:
+                    self.file_table.update_file_status(row, 'processing')
+                    file_id = self.file_id_map.get(row)
+                    if file_id:
+                        self.db.update_file_status(file_id, 'processing')
+                    
+                    # Auto-select this row and show preview
+                    self.file_table.selectRow(row)
+                    print(f"Processing file at row {row}: {current_file_path}")
+                    # Show before image while processing
+                    self.image_preview.set_images(current_file_path, None)
+                    break
+    
+    def _update_preview_image(self, file_path):
+        """Update the preview image."""
+        if self.dnd_label_1:
+            self.dnd_label_1.hide()
+        if self.dnd_label_2:
+            self.dnd_label_2.hide()
+        if self.dnd_label_3:
+            self.dnd_label_3.hide()
+        
+        margins = 10
+        self.preview_image.setGeometry(
+            margins,
+            margins,
+            self.drop_area.width() - (margins * 2),
+            self.drop_area.height() - (margins * 2)
+        )
+        
+        if self.preview_image.setImagePath(file_path):
+            self.preview_image.show()
+    
+    def _on_file_completed(self, file_path):
+        """Handle file completion."""
+        # Find row index and update status
+        for row in range(self.file_table.rowCount()):
+            if self.file_table.get_file_path(row) == file_path:
+                self.file_table.update_file_status(row, 'completed')
+                output_path = self._get_output_path(file_path)
+                print(f"File completed: {file_path}")
+                print(f"Looking for output at: {output_path}")
+                print(f"Output exists: {os.path.exists(output_path) if output_path else False}")
+                
+                file_id = self.file_id_map.get(row)
+                if file_id:
+                    self.db.update_file_status(file_id, 'completed', output_path)
+                
+                # Check if this row is selected
+                selected_rows = self.file_table.selectionModel().selectedRows()
+                if selected_rows and selected_rows[0].row() == row:
+                    # Show after image (output) now that it's complete
+                    if output_path and os.path.exists(output_path):
+                        print(f"Updating preview with output: {output_path}")
+                        self.image_preview.set_images(file_path, output_path)
+                    else:
+                        print(f"Output not found, keeping before image")
+                break
+    
+    def _on_processing_finished(self, processing_time, file_count):
+        """Handle processing completion."""
+        if self.thread and self.thread.isRunning():
+            self.thread.quit()
+            self.thread.wait()
+        
+        self.thread = None
+        self.worker = None
+        
+        self.progress_bar.hide()
+        
+        if hasattr(self.ui, 'stopButton') and self.ui.stopButton:
+            self.ui.stopButton.setEnabled(False)
+        
+        if hasattr(self.ui, 'repeatButton') and self.ui.repeatButton and self.last_processed_files:
+            self.ui.repeatButton.setEnabled(True)
+        
+        minutes = int(processing_time // 60)
+        seconds = int(processing_time % 60)
+        time_str = f"{minutes} menit {seconds} detik" if minutes > 0 else f"{seconds} detik"
+        
+        QMessageBox.information(
+            self,
+            "Selesai",
+            f"Pemrosesan selesai!\n\n"
+            f"Total file: {file_count}\n"
+            f"Waktu: {time_str}"
+        )
+    
+    def _reset_ui_state(self):
+        """Reset UI to initial state."""
+        if self.preview_image:
+            self.preview_image.hide()
+        
+        if self.dnd_label_1 and hasattr(self, 'original_label1_text'):
+            self.dnd_label_1.setText(self.original_label1_text)
+            self.dnd_label_1.show()
+        
+        if self.dnd_label_2 and hasattr(self, 'original_label2_text'):
+            self.dnd_label_2.setText(self.original_label2_text)
+            self.dnd_label_2.show()
+        
+        if self.dnd_label_3 and hasattr(self, 'original_label3_text'):
+            self.dnd_label_3.setText(self.original_label3_text)
+            self.dnd_label_3.show()
+        
+        if hasattr(self.ui, 'stopButton') and self.ui.stopButton:
+            self.ui.stopButton.setEnabled(False)
+        
+        if hasattr(self.ui, 'repeatButton') and self.ui.repeatButton:
+            self.ui.repeatButton.setEnabled(bool(self.last_processed_files))
+    
+    def _on_dnd_area_clicked(self, event):
+        """Handle click on DND area to open file dialog."""
+        if self.drop_area.isVisible() and not self.split_view.isVisible():
+            self._open_files_dialog()
+    
+    def _on_file_selected(self, row, file_path):
+        """Handle file selection from table."""
+        print(f"File selected: row={row}, path={file_path}")
+        
+        # Get output path if exists
+        output_path = self._get_output_path(file_path)
+        print(f"Output path: {output_path}, exists={os.path.exists(output_path) if output_path else False}")
+        
+        # Show preview
+        if output_path and os.path.exists(output_path):
+            print(f"Setting preview with before={file_path}, after={output_path}")
+            self.image_preview.set_images(file_path, output_path)
+        else:
+            print(f"Setting preview with only before={file_path}")
+            self.image_preview.set_images(file_path, None)
+    
+    def _on_file_double_clicked(self, file_path):
+        """Handle double-click on file to open location."""
+        folder_path = os.path.dirname(file_path)
+        
+        if sys.platform == 'win32':
+            # Windows: open folder and select file
+            subprocess.run(['explorer', '/select,', os.path.normpath(file_path)])
+        elif sys.platform == 'darwin':
+            # macOS
+            subprocess.run(['open', '-R', file_path])
+        else:
+            # Linux
+            subprocess.run(['xdg-open', folder_path])
+    
+    def _on_reset_clicked(self):
+        """Handle reset button click."""
+        self.file_table.clear_all()
+        self.image_preview.clear()
+        self.file_id_map.clear()
+        self.current_session_id = None
+        
+        # Hide split view, show DND area
+        self.split_view.hide()
+        self.drop_area.show()
+        
+        if hasattr(self.ui, 'resetButton') and self.ui.resetButton:
+            self.ui.resetButton.hide()
+        
+        self._reset_ui_state()
+    
+    def _get_output_path(self, input_path):
+        """Get output path for a given input file."""
+        # Use the same output_dir that was used by the worker
+        output_dir = self.current_output_dir if hasattr(self, 'current_output_dir') and self.current_output_dir else None
+        
+        if not output_dir:
+            # Use default PNG folder
+            input_dir = os.path.dirname(input_path)
+            output_dir = os.path.join(input_dir, "PNG")
+        
+        filename = os.path.splitext(os.path.basename(input_path))[0]
+        
+        # Try to find the actual output file (with timestamp)
+        # Pattern: filename_transparent_*.png
+        import glob
+        
+        # Search in multiple possible locations
+        search_dirs = [
+            output_dir,  # Main output dir
+            os.path.join(output_dir, "PNG"),  # Subfolder PNG (created by image_utils)
+        ]
+        
+        all_matches = []
+        for search_dir in search_dirs:
+            pattern = os.path.join(search_dir, f"{filename}_transparent*.png")
+            print(f"Searching for output with pattern: {pattern}")
+            matches = glob.glob(pattern)
+            if matches:
+                print(f"Found {len(matches)} matches in {search_dir}")
+                all_matches.extend(matches)
+        
+        if all_matches:
+            # Return the most recent one
+            result = max(all_matches, key=os.path.getmtime)
+            print(f"Returning most recent from all matches: {result}")
+            return result
+        
+        # Fallback to expected paths without timestamp
+        for search_dir in search_dirs:
+            fallback = os.path.join(search_dir, f"{filename}_transparent.png")
+            if os.path.exists(fallback):
+                print(f"Found fallback: {fallback}")
+                return fallback
+        
+        # Final fallback
+        fallback = os.path.join(output_dir, f"{filename}_transparent.png")
+        print(f"No matches found, returning final fallback: {fallback}")
+        return fallback
+    
+    def dragEnterEvent(self, event):
+        """Handle drag enter event."""
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+            self.drop_area.setProperty("dragActive", True)
+            self.drop_area.style().unpolish(self.drop_area)
+            self.drop_area.style().polish(self.drop_area)
+        else:
+            event.ignore()
+    
+    def dragLeaveEvent(self, event):
+        """Handle drag leave event."""
+        self.drop_area.setProperty("dragActive", False)
+        self.drop_area.style().unpolish(self.drop_area)
+        self.drop_area.style().polish(self.drop_area)
+        event.accept()
+    
+    def dropEvent(self, event):
+        """Handle drop event."""
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+            
+            self.drop_area.setProperty("dragActive", False)
+            self.drop_area.style().unpolish(self.drop_area)
+            self.drop_area.style().polish(self.drop_area)
+            
+            file_paths = [url.toLocalFile() for url in event.mimeData().urls()]
+            
+            self._reset_ui_state()
+            self._process_files(file_paths)
+        else:
+            event.ignore()
+    
+    def resizeEvent(self, event):
+        """Handle resize event."""
+        super().resizeEvent(event)
+        
+        if hasattr(self, 'preview_image') and self.preview_image.isVisible():
+            margins = 10
+            self.preview_image.setGeometry(
+                margins,
+                margins,
+                self.drop_area.width() - (margins * 2),
+                self.drop_area.height() - (margins * 2)
+            )

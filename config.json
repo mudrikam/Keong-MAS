@@ -28,6 +28,7 @@
         "color": "#FFFFFF"
     },
     "app": {
-        "show_success_stats": true
+        "show_success_stats": true,
+        "output_location": "C:/Users/mudri/Downloads/Remove bg test/out test"
     }
 }

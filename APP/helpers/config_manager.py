@@ -336,6 +336,39 @@ def get_jpg_quality():
 
 def set_jpg_quality(quality):
     """Set the JPG quality setting (1-100)"""
-    # Ensure quality is within valid range
     quality_int = max(1, min(100, int(quality)))
     return set_value('image_processing.jpg_export.quality', quality_int)
+
+def get_output_location():
+    """Get the custom output location if set, otherwise None (defaults to PNG folder)"""
+    return get_value('app.output_location', None)
+
+def set_output_location(location):
+    """Set custom output location (None or empty string = default PNG folder)"""
+    if not location or location.strip() == "":
+        location = None
+    return set_value('app.output_location', location)
+
+def get_levels_black_point():
+    """Get the black point for levels adjustment"""
+    return get_value('image_processing.levels_adjustment.default.black_point', 20)
+
+def set_levels_black_point(value):
+    """Set the black point for levels adjustment"""
+    return set_value('image_processing.levels_adjustment.default.black_point', int(value))
+
+def get_levels_mid_point():
+    """Get the mid point for levels adjustment"""
+    return get_value('image_processing.levels_adjustment.default.mid_point', 70)
+
+def set_levels_mid_point(value):
+    """Set the mid point for levels adjustment"""
+    return set_value('image_processing.levels_adjustment.default.mid_point', int(value))
+
+def get_levels_white_point():
+    """Get the white point for levels adjustment"""
+    return get_value('image_processing.levels_adjustment.default.white_point', 200)
+
+def set_levels_white_point(value):
+    """Set the white point for levels adjustment"""
+    return set_value('image_processing.levels_adjustment.default.white_point', int(value))
