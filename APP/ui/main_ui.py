@@ -173,6 +173,7 @@ def _create_controls():
     quality_spin.setToolTip("Kualitas ekspor JPG (1-100)")
     row1.addWidget(quality_spin)
     
+    # End of row1 controls
     row1.addStretch()
     
     main_layout.addLayout(row1)
@@ -225,7 +226,34 @@ def _create_controls():
     clear_output_btn.setToolTip("Reset ke folder output default (PNG)")
     clear_output_btn.setFixedSize(28, 28)
     row2.addWidget(clear_output_btn)
-    
+
+    # Model selection combobox placed near the right side (left of WA button)
+    model_label = QLabel("Model:")
+    model_label.setObjectName('modelLabel')
+    model_label.setFixedWidth(40)
+    row2.addWidget(model_label)
+
+    from PySide6.QtWidgets import QComboBox
+    model_combo = QComboBox()
+    model_combo.setObjectName('modelComboBox')
+    model_combo.setFixedWidth(220)
+    model_combo.setFixedHeight(22)
+    model_combo.setToolTip("Pilih model (ONNX) untuk fokus segmentasi")
+    # Make popup denser (simplified)
+    from PySide6.QtCore import Qt
+    model_combo.setMaxVisibleItems(6)
+    view = model_combo.view()
+    view.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+    view.setSpacing(0)
+    view.setContentsMargins(0, 0, 0, 0)
+    view.setUniformItemSizes(True)
+    view.setStyleSheet("""
+        QAbstractItemView { outline: none; font-size: 11px; }
+        QAbstractItemView::item { padding: 1px 6px; min-height: 14px; }
+        QAbstractItemView::item:selected { background: #444444; color: white; }
+    """)
+    row2.addWidget(model_combo)
+
     row2.addStretch()
     
     whatsapp_btn = QPushButton(" WA Grup")
@@ -332,6 +360,7 @@ def _create_controls():
         'midPointValue': mid_value,
         'whitePointSlider': white_slider,
         'whitePointValue': white_value,
+        'modelComboBox': model_combo,
     }
     
     return container, widgets

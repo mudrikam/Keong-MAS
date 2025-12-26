@@ -20,7 +20,7 @@ Cuma script buat hapus background foto doang. Gak ada fitur lain. Udah, gitu aja
 Gak perlu install:
 1. Download aja dari tombol hijau di atas
 2. Extract ZIP nya
-3. Jalanin file .bat
+3. Jalanin file Mulai MAS.bat
 4. Udah, gitu doang
 
 ## Fitur
@@ -34,6 +34,11 @@ Gak perlu install:
 - Langsung pake, gak usah nyeting apa-apa
 - Kalau mau tambah silahkan, kurangi ya monggo
 - Jangan berharap lebih. Itu aja fiturnya, cukup.
+
+## Model ONNX (pilihan)
+
+- Pilih model (mis. `u2net_cloth_seg`, `u2net_human_seg`, `isnet-general-use`) untuk fokus segmentasi yang berbeda.
+- Aplikasi akan otomatis mengunduh model yang belum ada saat pertama dipilih atau saat proses dijalankan.
 
 # Lisensi MIT
 

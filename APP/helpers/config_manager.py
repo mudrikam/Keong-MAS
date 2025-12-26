@@ -30,6 +30,9 @@ DEFAULT_CONFIG = {
         "jpg_export": {
             "enabled": False,
             "quality": 90  # Default JPG quality (1-100)
+        },
+        "model": {
+            "selected": "isnet-general-use"  # Default ONNX model name
         }
     },
     "image_cropping": {
@@ -63,7 +66,7 @@ def load_config():
         if os.path.exists(config_path):
             with open(config_path, 'r') as f:
                 config = json.load(f)
-                logger.info(f"Configuration loaded from {config_path}")
+                logger.debug(f"Configuration loaded from {config_path}")
                 
                 # Handle any missing keys by merging with defaults
                 merged_config = DEFAULT_CONFIG.copy()
@@ -73,7 +76,7 @@ def load_config():
             # Create default config file
             with open(config_path, 'w') as f:
                 json.dump(DEFAULT_CONFIG, f, indent=4)
-                logger.info(f"Created default configuration at {config_path}")
+                logger.debug(f"Created default configuration at {config_path}")
             return DEFAULT_CONFIG.copy()
     
     except Exception as e:
@@ -198,7 +201,7 @@ def set_crop_detection_threshold(threshold):
 def get_unified_margin():
     """Get the unified margin value used for all operations"""
     margin = get_value('image_processing.unified_margin', 10)
-    logger.info(f"Retrieving unified margin: {margin}px")
+    logger.debug(f"Retrieving unified margin: {margin}px")
     return margin
 
 def set_unified_margin(margin):
@@ -342,6 +345,27 @@ def set_jpg_quality(quality):
 def get_output_location():
     """Get the custom output location if set, otherwise None (defaults to PNG folder)"""
     return get_value('app.output_location', None)
+
+# Model selection settings
+def get_selected_model():
+    """Get the selected ONNX model name"""
+    return get_value('image_processing.model.selected', 'isnet-general-use')
+
+
+def set_selected_model(model_name):
+    """Set the selected ONNX model name and log the result."""
+    if not model_name:
+        return False
+    try:
+        success = set_value('image_processing.model.selected', str(model_name))
+        if success:
+            logger.info(f"Selected model saved: {model_name}")
+        else:
+            logger.warning(f"Failed to save selected model: {model_name}")
+        return success
+    except Exception as e:
+        logger.error(f"Error saving selected model {model_name}: {str(e)}")
+        return False
 
 def set_output_location(location):
     """Set custom output location (None or empty string = default PNG folder)"""

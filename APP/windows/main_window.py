@@ -4,7 +4,7 @@ import os
 import sys
 import webbrowser
 import subprocess
-from PySide6.QtCore import Qt, QThread, QTimer, QSize
+from PySide6.QtCore import Qt, QThread, QTimer, QSize, Signal
 from PySide6.QtGui import QIcon, QColor
 from PySide6.QtWidgets import (
     QMainWindow, QProgressBar, QMessageBox, QFileDialog, QColorDialog
@@ -26,12 +26,18 @@ from APP.helpers.config_manager import (
     get_output_location, set_output_location,
     get_levels_black_point, set_levels_black_point,
     get_levels_mid_point, set_levels_mid_point,
-    get_levels_white_point, set_levels_white_point
+    get_levels_white_point, set_levels_white_point,
+    get_selected_model, set_selected_model
 )
+
+from APP.helpers import model_manager
+import threading
 
 
 class MainWindow(QMainWindow):
     """Main application window."""
+    # Signal to receive download progress safely in the GUI thread
+    downloadProgress = Signal(str, float)
     
     WINDOW_TITLE = "Keong MAS (Kecilin Ongkos, Masking Auto Selesai)"
     DEFAULT_SIZE = (800, 550)
@@ -48,6 +54,18 @@ class MainWindow(QMainWindow):
         self.thread = None
         self.last_processed_files = []
         
+        # Download state for model downloads shown on progress bar
+        self._download_in_progress = False
+        self._saved_progress_value = None
+        self._saved_progress_format = None
+        self._last_completed_download_model = None
+
+        # Connect download progress signal to UI slot
+        try:
+            self.downloadProgress.connect(self._on_download_progress_ui)
+        except Exception:
+            pass
+
         # Database for session tracking
         db_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
@@ -127,11 +145,23 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(0)
         self.progress_bar.setTextVisible(True)
         self.progress_bar.setFormat("%p% - %v / %m")
+        # Apply consistent style that matches the dark theme so downloads and processing look the same
+        try:
+            # Use native (vanilla) progressbar styling: remove custom height and stylesheet
+            # Do NOT call setFixedHeight or setStyleSheet here so the system default is used
+            pass
+        except Exception:
+            pass
         self.progress_bar.hide()
         
         parent_layout = self.drop_area.parentWidget().layout()
         drop_area_index = parent_layout.indexOf(self.drop_area)
-        parent_layout.insertWidget(drop_area_index, self.progress_bar)
+        if drop_area_index >= 0:
+            parent_layout.insertWidget(drop_area_index, self.progress_bar)
+        else:
+            parent_layout.addWidget(self.progress_bar)
+        # Ensure the progress bar is on top when shown
+        self.progress_bar.raise_()
     
     def _setup_button_icons(self):
         """Setup icons for all buttons."""
@@ -208,6 +238,9 @@ class MainWindow(QMainWindow):
         
         if hasattr(self.ui, 'jpgQualitySpinBox') and self.ui.jpgQualitySpinBox:
             self.ui.jpgQualitySpinBox.valueChanged.connect(self._on_jpg_quality_changed)
+
+        if hasattr(self.ui, 'modelComboBox') and self.ui.modelComboBox:
+            self.ui.modelComboBox.currentTextChanged.connect(self._on_model_changed)
         
         if hasattr(self.ui, 'blackPointSlider') and self.ui.blackPointSlider:
             self.ui.blackPointSlider.valueChanged.connect(self._on_black_point_changed)
@@ -248,6 +281,50 @@ class MainWindow(QMainWindow):
         if hasattr(self.ui, 'jpgQualitySpinBox') and self.ui.jpgQualitySpinBox:
             self.ui.jpgQualitySpinBox.setValue(get_jpg_quality())
             self._update_jpg_quality_controls()
+
+        # Populate model selection combobox
+        if hasattr(self.ui, 'modelComboBox') and self.ui.modelComboBox:
+            try:
+                models = model_manager.get_available_models()
+                
+                # Disconnect signal before manipulating combobox
+                try:
+                    self.ui.modelComboBox.currentTextChanged.disconnect(self._on_model_changed)
+                except Exception:
+                    pass
+                
+                self.ui.modelComboBox.clear()
+                self.ui.modelComboBox.addItems(models)
+                selected = get_selected_model()
+                
+                if selected and selected in models:
+                    self.ui.modelComboBox.setCurrentText(selected)
+                elif selected:
+                    # Try a case-insensitive match first
+                    match = next((m for m in models if m.lower() == selected.lower()), None)
+                    if match:
+                        self.ui.modelComboBox.setCurrentText(match)
+                    else:
+                        # Add the previously selected model to the list so it persists in the UI even if it's not in the available list
+                        self.ui.modelComboBox.addItem(selected)
+                        self.ui.modelComboBox.setCurrentText(selected)
+                elif models:
+                    self.ui.modelComboBox.setCurrentIndex(0)
+
+                # Reconnect the signal
+                try:
+                    self.ui.modelComboBox.currentTextChanged.connect(self._on_model_changed)
+                except Exception:
+                    pass
+
+                # Prepare (download) the selected model in background if needed
+                # Use the signal's emit method as callback so it is thread-safe and runs slot in GUI thread
+                threading.Thread(
+                    target=lambda: model_manager.prepare_model(model_name=self.ui.modelComboBox.currentText(), callback=self.downloadProgress.emit),
+                    daemon=True
+                ).start()
+            except Exception as e:
+                print(f"Error populating model list: {str(e)}")
         
         if hasattr(self.ui, 'blackPointSlider') and self.ui.blackPointSlider:
             black_point = get_levels_black_point()
@@ -428,6 +505,145 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"Error saving JPG quality: {str(e)}")
     
+
+
+    def _on_download_progress_ui(self, model_name, progress):
+        """Slot executed in GUI thread to update UI for download progress.
+
+        Throttles updates to avoid overloading the event loop.
+        """
+        try:
+            import time
+            now = time.monotonic()
+
+            # Initialize throttling state
+            if not hasattr(self, '_last_download_ui_time'):
+                self._last_download_ui_time = 0.0
+                self._last_download_ui_progress = -1.0
+
+            # Throttle: only update if at least 150ms elapsed OR progress changed by >=1%, but always update 100%
+            if progress >= 100.0:
+                pass  # Always update for 100%
+            elif (now - self._last_download_ui_time) < 0.15 and abs(progress - self._last_download_ui_progress) < 1.0:
+                return
+
+            self._last_download_ui_time = now
+            self._last_download_ui_progress = progress
+
+            # Save previous progress state once
+            if not self._download_in_progress:
+                self._download_in_progress = True
+                self._saved_progress_value = self.progress_bar.value() if hasattr(self, 'progress_bar') else 0
+                self._saved_progress_format = self.progress_bar.format() if hasattr(self, 'progress_bar') else None
+                # Remember whether the progress bar was hidden before download started
+                try:
+                    self._download_saved_hidden = not self.progress_bar.isVisible()
+                except Exception:
+                    self._download_saved_hidden = False
+
+            # Ensure the progress bar is visible and shows download progress
+            if hasattr(self, 'progress_bar'):
+                self.progress_bar.setRange(0, 100)
+                self.progress_bar.show()
+                # Update value; avoid forcing z-order changes which can be expensive
+                self.progress_bar.setValue(int(progress))
+                # Keep consistent format; only change format text
+                self.progress_bar.setFormat(f"Downloading {model_name}: %p% ({int(progress)}%)")
+
+            # If download completed, mark as completed and show notification then restore progress bar
+            if progress >= 100 and model_name != self._last_completed_download_model:
+                try:
+                    # Mark as completed BEFORE showing modal dialog to avoid duplicate dialogs if multiple signals arrive
+                    self._last_completed_download_model = model_name
+                    QMessageBox.information(self, "Model Siap", f"Model {model_name} telah berhasil diunduh dan siap digunakan.")
+                    self._restore_progress_bar()
+                except Exception:
+                    pass
+
+            # If download in progress for a different model, clear the completed marker
+            try:
+                if progress < 100 and (self._last_completed_download_model is not None and model_name != self._last_completed_download_model):
+                    self._last_completed_download_model = None
+            except Exception:
+                pass
+
+        except Exception:
+            pass
+
+    def _download_progress_callback(self, model_name, progress):
+        """Compatibility callback (can be used by non-signal callers). Emits the GUI signal."""
+        try:
+            # Forward to the signal which will be delivered in GUI thread
+            self.downloadProgress.emit(model_name, float(progress))
+        except Exception as e:
+            print(f"Error emitting GUI download progress signal: {str(e)}")
+
+    def _restore_progress_bar(self):
+        """Restore progress bar to previous state after download finished."""
+        try:
+            if hasattr(self, 'progress_bar'):
+                if self._saved_progress_value is not None:
+                    self.progress_bar.setValue(self._saved_progress_value)
+                    if self._saved_progress_format:
+                        self.progress_bar.setFormat(self._saved_progress_format)
+                else:
+                    self.progress_bar.hide()
+
+        finally:
+            # Restore/clear flags
+            self._download_in_progress = False
+            self._saved_progress_value = None
+            self._saved_progress_format = None
+            # If progress bar was hidden before download, hide it now; otherwise restore format
+            try:
+                if hasattr(self, 'progress_bar'):
+                    if getattr(self, '_download_saved_hidden', False):
+                        self.progress_bar.hide()
+                    else:
+                        self.progress_bar.setFormat("%p% - %v / %m")
+            except Exception:
+                pass
+            finally:
+                # Clear saved-hidden flag
+                try:
+                    self._download_saved_hidden = False
+                except Exception:
+                    pass
+
+    def _on_model_changed(self, model_name):
+        """Handle model combobox selection change."""
+        try:
+            print(f"Model changed to: {model_name}")
+            set_selected_model(model_name)
+        except Exception as e:
+            print(f"Error saving selected model: {str(e)}")
+
+        # Download the selected model in the background (non-blocking) and show progress
+        def download_worker():
+            success = model_manager.prepare_model(model_name=model_name, callback=self._download_progress_callback)
+            # Ensure UI updated after download completes
+            def finish_ui():
+                try:
+                    if success:
+                        # Show completion briefly then restore
+                        self.progress_bar.setValue(100)
+                        self.progress_bar.setFormat(f"Downloaded {model_name}")
+                        QTimer.singleShot(1200, self._restore_progress_bar)
+            
+                        print(f"Model {model_name} siap untuk digunakan")
+                    else:
+                        try:
+                            QMessageBox.warning(self, "Gagal", f"Gagal mengunduh model: {model_name}")
+                        except Exception:
+                            pass
+                        self._restore_progress_bar()
+                except Exception as e:
+                    print(f"Error updating UI after download: {str(e)}")
+
+            QTimer.singleShot(0, finish_ui)
+
+        threading.Thread(target=download_worker, daemon=True).start()
+    
     def _on_output_location_clicked(self):
         """Handle output location button click."""
         current_location = get_output_location()
@@ -577,12 +793,25 @@ class MainWindow(QMainWindow):
         self.worker.finished.connect(self._on_processing_finished)
         self.worker.progress.connect(self._update_progress)
         self.worker.file_completed.connect(self._on_file_completed)
+        # Connect download progress from worker to the MainWindow signal (will be delivered in GUI thread)
+        self.worker.download_progress.connect(self.downloadProgress)
+        # Connect status updates from worker to show to user
+        self.worker.status_update.connect(lambda msg: print(f"Model status: {msg}"))
         
         self.thread.start()
     
     def _update_progress(self, value, message="", current_file_path=None):
         """Update progress bar."""
-        self.progress_bar.setValue(value)
+        try:
+            # Make sure the progressbar is visible and uses consistent format while processing files
+            if hasattr(self, 'progress_bar'):
+                if not self.progress_bar.isVisible():
+                    self.progress_bar.show()
+                self.progress_bar.setFormat("%p% - %v / %m")
+
+                self.progress_bar.setValue(value)
+        except Exception as e:
+            print(f"Error updating processing progress UI: {str(e)}")
         
         # Find row index for current file
         if current_file_path:
@@ -595,7 +824,6 @@ class MainWindow(QMainWindow):
                     
                     # Auto-select this row and show preview
                     self.file_table.selectRow(row)
-                    print(f"Processing file at row {row}: {current_file_path}")
                     # Show before image while processing
                     self.image_preview.set_images(current_file_path, None)
                     break
@@ -748,7 +976,25 @@ class MainWindow(QMainWindow):
             self.ui.resetButton.hide()
         
         self._reset_ui_state()
-    
+
+    def closeEvent(self, event):
+        """Save current model selection on close to ensure persistence."""
+        try:
+            if hasattr(self.ui, 'modelComboBox') and self.ui.modelComboBox:
+                current = self.ui.modelComboBox.currentText()
+                try:
+                    from APP.helpers.config_manager import set_selected_model, get_selected_model
+                    # Only write if different to avoid unnecessary file writes
+                    if current and current != get_selected_model():
+                        set_selected_model(current)
+                        print(f"Saved model selection on close: {current}")
+                except Exception as e:
+                    print(f"Warning: failed to save selected model on close: {str(e)}")
+        except Exception:
+            pass
+        finally:
+            return super().closeEvent(event)
+
     def _get_output_path(self, input_path):
         """Get output path for a given input file."""
         # Use the same output_dir that was used by the worker
@@ -843,3 +1089,14 @@ class MainWindow(QMainWindow):
                 self.drop_area.width() - (margins * 2),
                 self.drop_area.height() - (margins * 2)
             )
+    
+    def closeEvent(self, event):
+        """Handle window close event to save current model selection."""
+        try:
+            if hasattr(self.ui, 'modelComboBox') and self.ui.modelComboBox:
+                current_model = self.ui.modelComboBox.currentText()
+                if current_model:
+                    set_selected_model(current_model)
+        except Exception as e:
+            pass
+        super().closeEvent(event)

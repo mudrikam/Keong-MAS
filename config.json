@@ -17,6 +17,10 @@
         "jpg_export": {
             "enabled": false,
             "quality": 90
+        },
+        "model": {
+            "selected": "isnet-general-use",
+            "auto_fallback": true
         }
     },
     "image_cropping": {
@@ -29,6 +33,6 @@
     },
     "app": {
         "show_success_stats": true,
-        "output_location": ""
+        "output_location": null
     }
 }
