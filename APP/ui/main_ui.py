@@ -237,9 +237,10 @@ def _create_controls():
     model_combo = QComboBox()
     model_combo.setObjectName('modelComboBox')
     model_combo.setFixedWidth(220)
-    model_combo.setFixedHeight(22)
+    # Match other control heights for visual consistency
+    model_combo.setFixedHeight(28)
     model_combo.setToolTip("Pilih model (ONNX) untuk fokus segmentasi")
-    # Make popup denser (simplified)
+    # Make popup items slightly taller so they line up and are easy to read
     from PySide6.QtCore import Qt
     model_combo.setMaxVisibleItems(6)
     view = model_combo.view()
@@ -248,8 +249,8 @@ def _create_controls():
     view.setContentsMargins(0, 0, 0, 0)
     view.setUniformItemSizes(True)
     view.setStyleSheet("""
-        QAbstractItemView { outline: none; font-size: 11px; }
-        QAbstractItemView::item { padding: 1px 6px; min-height: 14px; }
+        QAbstractItemView { outline: none; font-size: 12px; }
+        QAbstractItemView::item { padding: 2px 6px; min-height: 20px; }
         QAbstractItemView::item:selected { background: #444444; color: white; }
     """)
     row2.addWidget(model_combo)
