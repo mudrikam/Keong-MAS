@@ -2,5 +2,7 @@ PySide6
 QtAwesome
 rembg
 onnxruntime
+onnxruntime-gpu
 Pillow
+requests
 numpy

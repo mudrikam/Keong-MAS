@@ -10,8 +10,7 @@ import threading
 # (di dalam folder proyek untuk self-contained)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 MODEL_DIR = os.path.join(BASE_DIR, ".u2net")
-os.makedirs(MODEL_DIR, exist_ok=True)
-print(f"Model rembg akan disimpan di: {MODEL_DIR}")
+os.makedirs(MODEL_DIR, exist_ok=True)  # model storage directory (created if missing)
 
 # Daftar model dan URL unduhan (hanya model default)
 DEFAULT_MODEL = "isnet-general-use"
@@ -151,7 +150,6 @@ def identify_best_model(image_path):
     Returns:
         str: Nama model default
     """
-    print(f"Menggunakan model default: {DEFAULT_MODEL}")
     return DEFAULT_MODEL
 
 
@@ -172,7 +170,7 @@ def _save_models_cache():
         with open(CACHE_PATH, 'w', encoding='utf-8') as f:
             import json
             json.dump(payload, f, indent=2, ensure_ascii=False)
-        print(f"Saved models cache to {CACHE_PATH}")
+        # Cache saved (silent)
     except Exception as e:
         print(f"Warning: failed to save models cache: {str(e)}")
 
@@ -241,8 +239,7 @@ def fetch_models_from_github(force=False):
             _fetched_once = True
             # Persist cache for offline use
             _save_models_cache()
-            print(f"Fetched {len(found)} ONNX models from GitHub release")
-            return found
+            # Fetch completed (silent): results merged into MODELS
 
     except Exception as e:
         print(f"Warning: failed to fetch model list from GitHub: {str(e)}")
@@ -312,23 +309,13 @@ def set_model_path():
         str: Path direktori model
     """
     os.environ["U2NET_HOME"] = MODEL_DIR
-    
-    # Tambahkan debugging untuk verifikasi folder model
-    print(f"Path model set ke: {MODEL_DIR}")
-    print(f"U2NET_HOME environment variable: {os.environ.get('U2NET_HOME')}")
-    
-    # Verifikasi apakah folder model ada
+
+    # Ensure model directory exists
     if not os.path.exists(MODEL_DIR):
-        print(f"Membuat direktori model: {MODEL_DIR}")
         os.makedirs(MODEL_DIR, exist_ok=True)
-    
-    # Periksa apakah sudah ada model di folder
+
+    # Minimal status: report model path and availability
     models_found = [f for f in os.listdir(MODEL_DIR) if f.endswith('.onnx')]
-    if models_found:
-        print(f"Model yang ditemukan: {', '.join(models_found)}")
-    else:
-        print("Tidak ada model yang ditemukan di folder model")
-        print(f"Model default akan diunduh otomatis: {DEFAULT_MODEL}")
     
     return MODEL_DIR
 

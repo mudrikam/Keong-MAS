@@ -78,16 +78,48 @@ class MaskWorker(QObject):
             import rembg
             self.progress.emit(20, "Memproses: Menghapus latar belakang (mask)...")
 
+            # Detect GPU availability and prefer CUDA if available
+            gpu_available = False
+            try:
+                import onnxruntime as ort
+                available_providers = ort.get_available_providers()
+                
+                # Check if CUDA provider is listed as available
+                if 'CUDAExecutionProvider' in available_providers:
+                    # Try to actually create a session with CUDA to verify it works
+                    try:
+                        import rembg
+                        # Try creating a session with a known model and CUDA provider
+                        test_session = rembg.new_session('isnet-general-use', providers=['CUDAExecutionProvider'])
+                        # Check if CUDA is actually being used (not just CPU fallback)
+                        if hasattr(test_session, '_sess') and hasattr(test_session._sess, 'get_providers'):
+                            used_providers = test_session._sess.get_providers()
+                            if 'CUDAExecutionProvider' in used_providers:
+                                gpu_available = True
+                    except Exception:
+                        gpu_available = False
+            except Exception:
+                gpu_available = False
+
             # Prefer direct session if model prepared
             session = None
             try:
                 if self.model_name:
-                    session = rembg.new_session(self.model_name)
+                    if gpu_available:
+                        session = rembg.new_session(self.model_name, providers=['CUDAExecutionProvider'])
+                    else:
+                        session = rembg.new_session(self.model_name)
                 elif prepared:
-                    session = rembg.new_session(prepared)
+                    if gpu_available:
+                        session = rembg.new_session(prepared, providers=['CUDAExecutionProvider'])
+                    else:
+                        session = rembg.new_session(prepared)
             except Exception:
                 try:
-                    session = rembg.new_session()
+                    if gpu_available:
+                        session = rembg.new_session(providers=['CUDAExecutionProvider'])
+                    else:
+                        session = rembg.new_session()
                 except Exception:
                     session = None
 
@@ -116,7 +148,25 @@ class MainWindow(QMainWindow):
     
     def __init__(self):
         super().__init__()
+        # Ensure attribute exists before window init (used in _init_window)
+        self.gpu_supported = False
+        # Initialize window first so app icon and other window properties are set
         self._init_window()
+
+        # Now check GPU support (simple check - if CUDA/cuDNN installed, use GPU)
+        from APP.helpers.gpu_fix import is_cuda_available, has_nvidia_gpu, get_gpu_names
+        gpu_names = get_gpu_names()
+        nvidia_gpus = [name for name in gpu_names if 'nvidia' in name.lower() or 'rtx' in name.lower() or 'gtx' in name.lower() or 'quadro' in name.lower()]
+        
+        # Perform smart GPU/provider check and handle dialogs/title updates
+        self._check_gpu_support()
+        
+        # Update title after GPU check if not already showing provider
+        try:
+            if self.gpu_supported and "[Menggunakan GPU" not in self.windowTitle():
+                self.setWindowTitle(self.WINDOW_TITLE + " [Menggunakan GPU]")
+        except Exception:
+            pass
         self._init_ui()
         self._init_connections()
         self._load_settings()
@@ -146,9 +196,238 @@ class MainWindow(QMainWindow):
         self.current_session_id = None
         self.file_id_map = {}  # row_index -> file_id
         
+    def _check_gpu_support(self):
+        """Check GPU providers and update title/UI accordingly.
+
+        This method performs a best-effort check of available GPU providers
+        and attempts to create a test session with them. It will:
+        - set `self.gpu_supported` if a non-CPU provider works
+        - set window title to include the chosen provider
+        - show provider-appropriate install dialogs if the provider is present but not usable
+        - try fallbacks between providers if the preferred one fails
+        """
+        try:
+            from APP.helpers.gpu_fix import get_provider_list, get_available_ort_providers, get_gpu_names, detect_best_provider, CUDA_BIN, CUDNN_BIN
+
+            gpu_names = get_gpu_names()
+            gpu_name = gpu_names[0] if gpu_names else 'GPU'
+
+            providers_available = get_available_ort_providers()
+            preferred = detect_best_provider()
+
+            # If preferred is CPU, no GPU provider is available
+            if preferred == 'CPUExecutionProvider':
+                self.gpu_supported = False
+                if gpu_names:
+                    print(f"GPU terdeteksi: {', '.join(gpu_names)} - namun tidak ada provider GPU (CUDA/DML/ROCm) tersedia, menggunakan CPU")
+                else:
+                    print("Tidak ada GPU terdeteksi - menggunakan CPU")
+                return
+
+            # Try preferred provider first
+            tried = []
+            success = False
+            last_exc = None
+            # Create an ordered list: preferred first, then other providers except CPU
+            candidates = [preferred] + [p for p in providers_available if p != preferred and p != 'CPUExecutionProvider']
+
+            for prov in candidates:
+                tried.append(prov)
+                try:
+                    import rembg
+                    # Attempt to create a quick session with provider
+                    sess = rembg.new_session('isnet-general-use', providers=[prov])
+                    # If session created, assume provider is usable
+                    self.gpu_supported = True
+                    # Prefer showing the friendly GPU name in the title instead of technical provider id
+                    display_name = gpu_name if gpu_name else prov.split('ExecutionProvider')[0]
+                    # Remove extra whitespace and ensure a short, readable label
+                    display_name = display_name.strip()
+                    print(f"GPU {display_name} tersedia dan berfungsi - akan ditampilkan di title aplikasi")
+                    # Update title with friendly GPU name
+                    self.setWindowTitle(self.WINDOW_TITLE + f" [Menggunakan GPU: {display_name}]")
+                    success = True
+                    break
+                except Exception as e:
+                    last_exc = e
+                    # If error mentions cuDNN and provider is CUDA, suggest cuDNN only when actually required
+                    err_text = str(e).lower()
+                    if prov == 'CUDAExecutionProvider' and ('cudnn' in err_text or 'cudnn64' in err_text or 'cudnncreate' in err_text):
+                        print("cuDNN tidak ditemukan atau rusak — pasang cuDNN 9.5.0 untuk performa dan kompatibilitas optimal pada operator konvolusi.")
+                        try:
+                            self._show_cudnn_info_dialog(gpu_name=gpu_name)
+                        except Exception:
+                            pass
+                        # Don't break; try other providers as fallback
+                    else:
+                        # generic provider failure; try next
+                        print(f"Provider {prov} terdeteksi tapi gagal dicreate: {e}")
+                        continue
+
+            if not success:
+                # No provider worked - inform user appropriately
+                self.gpu_supported = False
+                if providers_available and any(p != 'CPUExecutionProvider' for p in providers_available):
+                    # There are providers installed but failing
+                    print(f"Terdapat provider GPU terpasang ({', '.join([p for p in providers_available if p != 'CPUExecutionProvider'])}) tetapi semuanya gagal. Menjalankan CPU.")
+                    try:
+                        # Show a general provider warning dialog
+                        self._show_gpu_warning_dialog(provider=preferred, gpu_name=gpu_name)
+                    except Exception:
+                        pass
+                else:
+                    # No providers installed
+                    if gpu_names:
+                        print(f"GPU {gpu_name} terdeteksi, tetapi tidak ada provider GPU yang tersedia. Pasang driver/runtime vendor (CUDA/DML/ROCm) untuk mengaktifkan akselerasi. Menggunakan CPU.")
+                    else:
+                        print("Tidak ada GPU terdeteksi - menggunakan CPU")
+        except Exception as e:
+            print(f"Error during GPU support check: {e}")
+            self.gpu_supported = False
+    
+    def _show_gpu_warning_dialog(self, provider: str | None = None, gpu_name: str | None = None):
+        """Show a provider-agnostic warning dialog when GPU is detected but provider/runtime is missing.
+
+        - `provider`: optional provider id (e.g., 'CUDAExecutionProvider' or 'DmlExecutionProvider').
+        - `gpu_name`: optional friendly GPU name to show.
+        """
+        try:
+            from APP.helpers.gpu_fix import get_gpu_names
+            detected = get_gpu_names()
+            if not gpu_name:
+                gpu_name = detected[0] if detected else 'GPU'
+        except Exception:
+            if not gpu_name:
+                gpu_name = 'GPU'
+
+        # Prepare message depending on provider
+        if provider and 'cuda' in provider.lower():
+            title = "GPU Terdeteksi Tapi CUDA Tidak Tersedia"
+            text = f"{gpu_name} terdeteksi, namun CUDA runtime/toolkit tidak tersedia atau tidak dapat digunakan."
+            info = (
+                "Untuk mengaktifkan akselerasi GPU (NVIDIA):\n\n"
+                "1. Pasang driver NVIDIA dan CUDA Toolkit 12.8 dari situs resmi NVIDIA\n"
+                "2. Restart aplikasi setelah pemasangan\n\n"
+                "Aplikasi tetap berjalan di CPU sampai kamu memasang driver/runtime vendor."
+            )
+            link = "https://developer.nvidia.com/cuda-12-8-0-download-archive"
+        elif provider and 'dml' in provider.lower():
+            title = "GPU Terdeteksi Tapi DirectML Tidak Tersedia"
+            text = f"{gpu_name} terdeteksi, namun DirectML tidak tersedia atau tidak dapat digunakan."
+            info = (
+                "Untuk mengaktifkan akselerasi GPU (AMD/Intel on Windows):\n\n"
+                "1. Pasang driver grafis terbaru dari vendor (AMD/Intel)\n"
+                "2. Restart aplikasi setelah pemasangan\n\n"
+                "Aplikasi tetap berjalan di CPU sampai kamu memasang driver vendor."
+            )
+            link = "https://learn.microsoft.com/windows/ai/directml/"
+        elif provider and 'rocm' in provider.lower():
+            title = "GPU Terdeteksi Tapi ROCm Tidak Tersedia"
+            text = f"{gpu_name} terdeteksi, namun ROCm tidak tersedia atau tidak dapat digunakan."
+            info = (
+                "Untuk mengaktifkan akselerasi GPU (AMD pada Linux):\n\n"
+                "1. Install ROCm sesuai dokumentasi AMD\n"
+                "2. Pastikan instalasi ROCm dan runtime terkait selesai\n\n"
+                "Aplikasi tetap berjalan di CPU sampai kamu menginstall ROCm dan runtime terkait."
+            )
+            link = "https://www.amd.com/en/rocm"
+        else:
+            title = "GPU Terdeteksi Tapi Provider GPU Tidak Tersedia"
+            text = f"{gpu_name} terdeteksi, namun tidak ada provider GPU yang dapat digunakan untuk akselerasi."
+            info = (
+                "Untuk mengaktifkan akselerasi GPU, pasang driver GPU dan runtime resmi dari vendor (mis. NVIDIA/AMD/Intel) sesuai panduan mereka.\n\n"
+                "Aplikasi tetap berjalan di CPU sampai kamu memasang driver/runtime vendor."
+            )
+            link = "https://www.google.com/search?q=install+gpu+driver"
+
+        # Console message
+        print("\n=== GPU WARNING ===")
+        print(text)
+        print(info)
+
+        # GUI dialog if available
+        try:
+            from PySide6.QtWidgets import QApplication
+            if QApplication.instance() is not None:
+                try:
+                    msg = QMessageBox(self)
+                    msg.setWindowIcon(self.windowIcon())
+                except Exception:
+                    msg = QMessageBox()
+                msg.setIcon(QMessageBox.Warning)
+                msg.setWindowTitle(title)
+                # Allow HTML in text and informativeText
+                msg.setText(f"<b><span style='color:green'>{gpu_name}</span></b> terdeteksi, tetapi provider tidak tersedia atau tidak dapat dijalankan.")
+                msg.setInformativeText(info)
+                msg.setStandardButtons(QMessageBox.Ok)
+                more = msg.addButton("Panduan Instalasi", QMessageBox.ActionRole)
+                msg.exec()
+                if msg.clickedButton() == more:
+                    import webbrowser
+                    webbrowser.open(link)
+        except Exception:
+            pass
+
+    def _show_cudnn_info_dialog(self, gpu_name: str | None = None):
+        """Show info dialog when CUDA is available but cuDNN is missing for full GPU support.
+
+        Provides clear steps for the user to install cuDNN and links to the download page.
+        """
+        try:
+            from APP.helpers.gpu_fix import get_gpu_names
+            detected = get_gpu_names()
+            if not gpu_name:
+                gpu_name = detected[0] if detected else 'NVIDIA GPU'
+        except Exception:
+            if not gpu_name:
+                gpu_name = 'NVIDIA GPU'
+
+        # Console guidance first
+        print("\n=== cuDNN INFO ===")
+        print(f"CUDA terdeteksi, tapi cuDNN belum terpasang pada sistem kamu ({gpu_name}).")
+        print("Pasang cuDNN 9.5.0 untuk performa dan kompatibilitas optimal pada operator konvolusi yang membutuhkan.")
+        print("Setelah install, restart aplikasi dan title akan berubah ke '[Menggunakan GPU]'\n")
+
+        # Try to show GUI dialog if QApplication exists
+        try:
+            from PySide6.QtWidgets import QApplication
+            if QApplication.instance() is not None:
+                try:
+                    info_msg = QMessageBox(self)
+                    info_msg.setWindowIcon(self.windowIcon())
+                except Exception:
+                    info_msg = QMessageBox()
+
+                info_msg.setIcon(QMessageBox.Information)
+                info_msg.setWindowTitle("cuDNN (Opsional)")
+                info_msg.setText(f"CUDA Toolkit terdeteksi, namun cuDNN belum terpasang pada sistem kamu (<b><span style='color:green'>{gpu_name}</span></b>).")
+                info_msg.setInformativeText(
+                    "cuDNN meningkatkan performa untuk beberapa operator konvolusi dan model. Pasang cuDNN 9.5.0 untuk performa/kompatibilitas optimal pada model yang membutuhkan operator tersebut:\n\n"
+                    "1. Download cuDNN 9.5.0 (EXE atau ZIP) dari NVIDIA\n"
+                    "2. Install cuDNN atau extract semua .dll dari paket ke:\n"
+                    "   C:\\Program Files\\NVIDIA\\CUDNN\\v9.5\\bin\\12.6 (atau ke CUDA bin)\n"
+                    "3. Restart aplikasi\n\n"
+                    "Aplikasi tetap berjalan di GPU (dengan runtime CUDA) atau fallback ke CPU tanpa cuDNN."
+                )
+                info_msg.setStandardButtons(QMessageBox.Ok)
+                download_button = info_msg.addButton("Buka Situs cuDNN", QMessageBox.ActionRole)
+                info_msg.exec()
+                if info_msg.clickedButton() == download_button:
+                    import webbrowser
+                    webbrowser.open("https://developer.nvidia.com/cudnn-9-5-0-download-archive")
+                    import webbrowser
+                    webbrowser.open("https://developer.nvidia.com/cudnn-9-5-0-download-archive")
+        except Exception:
+            # GUI not available; console message is sufficient
+            pass
     def _init_window(self):
         """Initialize window properties."""
-        self.setWindowTitle(self.WINDOW_TITLE)
+        # Set title with GPU indicator if supported
+        title = self.WINDOW_TITLE
+        if self.gpu_supported:
+            title += " [Menggunakan GPU]"
+        self.setWindowTitle(title)
+        
         self.resize(*self.DEFAULT_SIZE)
         self.setAcceptDrops(True)
         

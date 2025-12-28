@@ -5,7 +5,7 @@ import threading
 from pathlib import Path
 from PIL import Image
 from PySide6.QtCore import QObject, Signal
-import rembg
+# import rembg  # Moved to inside functions to avoid early loading
 
 from APP.helpers import model_manager
 from APP.helpers.config_manager import (
@@ -44,6 +44,26 @@ class RemBgWorker(QObject):
         self.start_time = 0
         self.processed_files_count = 0
         self.temp_files_to_cleanup = []  # Track temporary PNG files for cleanup
+        
+        # Ensure CUDA DLL paths are available in worker thread
+        cuda_bin = r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8\bin"
+        cudnn_bin = r"C:\Program Files\NVIDIA\CUDNN\v9.5\bin\12.6"
+        if hasattr(os, 'add_dll_directory'):
+            if os.path.isdir(cuda_bin):
+                os.add_dll_directory(cuda_bin)
+            if os.path.isdir(cudnn_bin):
+                os.add_dll_directory(cudnn_bin)
+
+    def _get_providers(self):
+        """Get providers list based on available ONNX Runtime providers.
+
+        Prioritizes: CUDA > DML > ROCm > CPU.
+        """
+        try:
+            from APP.helpers.gpu_fix import get_provider_list
+            return get_provider_list()
+        except Exception:
+            return []
 
     def process_files(self):
         """Process all files in the queue."""
@@ -226,6 +246,7 @@ class RemBgWorker(QObject):
 
     def _process_with_rembg(self, input_img, output_dir, file_name, model_name, image_path):
         """Process image with rembg to remove background."""
+        import rembg  # Import here to ensure GPU paths are set up first
         output_path = os.path.join(output_dir, f"{file_name}.png")
         mask_path = os.path.join(output_dir, f"{file_name}_mask.png")
         
@@ -244,10 +265,27 @@ class RemBgWorker(QObject):
 
                     # Use a local variable inside this nested function to avoid UnboundLocalError
                     selected_model_name = model_name
+                    
+                    # Check if CUDA is available by trying to load cuDNN
+                    gpu_available = False
+                    try:
+                        providers = self._get_providers()
+                        if providers:  # If _get_providers returns CUDA providers
+                            # Try to create a test session with CUDA
+                            import rembg
+                            test_session = rembg.new_session('isnet-general-use', providers=providers)
+                            gpu_available = True
+                            print("GPU (CUDA) tersedia dan berfungsi, akan menggunakan GPU untuk inference")
+                        else:
+                            print("GPU tidak tersedia, akan menggunakan CPU")
+                    except Exception as e:
+                        print(f"GPU (CUDA) gagal digunakan: {str(e)}, akan menggunakan CPU")
+                    
                     try:
                         # First try creating session by model name (preferred)
                         print(f"Mencoba membuat session dengan model name: {selected_model_name}...")
-                        session = rembg.new_session(selected_model_name)
+                        providers = self._get_providers()
+                        session = rembg.new_session(selected_model_name, providers=providers) if providers else rembg.new_session(selected_model_name)
                     except Exception as e_name:
                         print(f"Session by name failed for {selected_model_name}: {str(e_name)}")
 
@@ -256,7 +294,8 @@ class RemBgWorker(QObject):
                         if model_file and os.path.exists(model_file):
                             try:
                                 print(f"Mencoba membuat session dengan model file: {model_file}...")
-                                session = rembg.new_session(model_file)
+                                providers = self._get_providers()
+                                session = rembg.new_session(model_file, providers=providers) if providers else rembg.new_session(model_file)
                                 file_attempted = True
                             except Exception as e_file:
                                 print(f"Session by file failed for {model_file}: {str(e_file)}")
@@ -272,7 +311,8 @@ class RemBgWorker(QObject):
                                 if cand in name_lower or (cand.replace('-', '_') in name_lower):
                                     try:
                                         print(f"Mencoba family {cand} untuk model {selected_model_name}...")
-                                        session = rembg.new_session(cand)
+                                        providers = self._get_providers()
+                                        session = rembg.new_session(cand, providers=providers) if providers else rembg.new_session(cand)
                                         tried_family = cand
                                         break
                                     except Exception as e_fam:
@@ -283,7 +323,8 @@ class RemBgWorker(QObject):
                                 for cand in candidates:
                                     try:
                                         print(f"Mencoba family {cand} untuk model {selected_model_name}...")
-                                        session = rembg.new_session(cand)
+                                        providers = self._get_providers()
+                                        session = rembg.new_session(cand, providers=providers) if providers else rembg.new_session(cand)
                                         tried_family = cand
                                         break
                                     except Exception as e_fam:
