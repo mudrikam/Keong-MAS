@@ -44,7 +44,7 @@ REM Set base directory to the location of this batch file (removes trailing back
 set "BASE_DIR=%~dp0"
 set "BASE_DIR=%BASE_DIR:~0,-1%"
 set "PYTHON_DIR=%BASE_DIR%\python\Windows"
-set "PYTHON_EXE=%PYTHON_DIR%\python.exe"
+set "PYTHON_EXE=%PYTHON_DIR%\pythonw.exe"
 set "MAIN_PY=%BASE_DIR%\main.py"
 
 REM =====================================================================

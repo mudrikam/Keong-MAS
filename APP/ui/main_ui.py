@@ -1,6 +1,7 @@
 """Main UI layout creation for Keong-MAS."""
 
 from PySide6.QtCore import Qt, QSize
+import qtawesome as qta
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel,
     QPushButton, QCheckBox, QSpinBox, QSlider, QGroupBox, QSplitter
@@ -172,7 +173,19 @@ def _create_controls():
     quality_spin.setFixedHeight(22)
     quality_spin.setToolTip("Kualitas ekspor JPG (1-100)")
     row1.addWidget(quality_spin)
-    
+
+    # Always-on-top checkbox, placed next to quality controls (persisted)
+    try:
+        always_on_top_cb = QCheckBox("Selalu di atas")
+        always_on_top_cb.setObjectName('alwaysOnTopCheckBox')
+        always_on_top_cb.setToolTip('Jaga jendela tetap di atas (tersimpan)')
+        always_on_top_cb.setFixedHeight(22)
+        always_on_top_cb.setFixedWidth(120)
+        row1.addWidget(always_on_top_cb)
+    except Exception:
+        always_on_top_cb = None
+        pass
+
     # End of row1 controls
     row1.addStretch()
     
@@ -272,69 +285,64 @@ def _create_controls():
     levels_layout.setSpacing(6)
     levels_layout.setContentsMargins(6, 12, 6, 6)
     
+    # Button to enter mask adjustment mode
+    configure_mask_btn = QPushButton("Atur Masking")
+    configure_mask_btn.setObjectName('configureMaskButton')
+    configure_mask_btn.setCheckable(True)
+    configure_mask_btn.setChecked(False)
+    configure_mask_btn.setToolTip("Klik untuk membuat preview mask dari gambar asli dan menyesuaikan Levels pada preview")
+    # Add icon supporting modern look
+    try:
+        configure_mask_btn.setIcon(qta.icon('fa5s.sliders-h'))
+        configure_mask_btn.setIconSize(QSize(14, 14))
+    except Exception:
+        pass
+    levels_layout.addWidget(configure_mask_btn)
+    levels_layout.addSpacing(8)
+    
+
     # Black Point
     black_label = QLabel("Hitam:")
     black_label.setFixedWidth(40)
-    levels_layout.addWidget(black_label)
-    
-    black_slider = QSlider(Qt.Horizontal)
-    black_slider.setObjectName('blackPointSlider')
-    black_slider.setRange(0, 100)
-    black_slider.setValue(20)
-    black_slider.setFixedWidth(70)
-    black_slider.setFixedHeight(18)
-    black_slider.setToolTip("Titik hitam (0-100)")
-    levels_layout.addWidget(black_slider)
-    
+    # Single multi-handle slider (black/mid/white)
+    from APP.widgets.multi_handle_slider import MultiHandleSlider
+    levels_slider = MultiHandleSlider()
+    levels_slider.setObjectName('levelsMultiSlider')
+    levels_slider.setFixedWidth(260)
+    levels_layout.addWidget(levels_slider)
+
+    # Value labels (shown right of the slider)
     black_value = QLabel("20")
     black_value.setObjectName('blackPointValue')
-    black_value.setFixedWidth(22)
+    black_value.setFixedWidth(30)
     levels_layout.addWidget(black_value)
-    
-    levels_layout.addSpacing(8)
-    
-    # Mid Point
-    mid_label = QLabel("Tengah:")
-    mid_label.setFixedWidth(45)
-    levels_layout.addWidget(mid_label)
-    
-    mid_slider = QSlider(Qt.Horizontal)
-    mid_slider.setObjectName('midPointSlider')
-    mid_slider.setRange(0, 255)
-    mid_slider.setValue(70)
-    mid_slider.setFixedWidth(70)
-    mid_slider.setFixedHeight(18)
-    mid_slider.setToolTip("Titik tengah (0-255)")
-    levels_layout.addWidget(mid_slider)
-    
+
     mid_value = QLabel("70")
     mid_value.setObjectName('midPointValue')
-    mid_value.setFixedWidth(22)
+    mid_value.setFixedWidth(30)
     levels_layout.addWidget(mid_value)
-    
-    levels_layout.addSpacing(8)
-    
-    # White Point
-    white_label = QLabel("Putih:")
-    white_label.setFixedWidth(35)
-    levels_layout.addWidget(white_label)
-    
-    white_slider = QSlider(Qt.Horizontal)
-    white_slider.setObjectName('whitePointSlider')
-    white_slider.setRange(0, 255)
-    white_slider.setValue(200)
-    white_slider.setFixedWidth(70)
-    white_slider.setFixedHeight(18)
-    white_slider.setToolTip("Titik putih (0-255)")
-    levels_layout.addWidget(white_slider)
-    
+
     white_value = QLabel("200")
     white_value.setObjectName('whitePointValue')
-    white_value.setFixedWidth(22)
+    white_value.setFixedWidth(30)
     levels_layout.addWidget(white_value)
-    
+
+    # Tombol Reset
+    reset_levels_btn = QPushButton("Reset Levels")
+    reset_levels_btn.setObjectName('resetLevelsButton')
+    reset_levels_btn.setFixedHeight(22)
+    reset_levels_btn.setToolTip("Kembalikan slider ke nilai recommended")
+    try:
+        reset_levels_btn.setIcon(qta.icon('fa5s.undo'))
+        reset_levels_btn.setIconSize(QSize(12, 12))
+    except Exception:
+        pass
+    levels_layout.addWidget(reset_levels_btn)
+
+
+
     levels_layout.addStretch()
-    
+
     main_layout.addWidget(levels_group)
     
     # Collect all widgets
@@ -355,13 +363,15 @@ def _create_controls():
         'openFolder': open_folder_btn,
         'openFiles': open_files_btn,
         'whatsappButton': whatsapp_btn,
-        'blackPointSlider': black_slider,
+        'levelsMultiSlider': levels_slider,
         'blackPointValue': black_value,
-        'midPointSlider': mid_slider,
         'midPointValue': mid_value,
-        'whitePointSlider': white_slider,
         'whitePointValue': white_value,
+        'configureMaskButton': configure_mask_btn,
         'modelComboBox': model_combo,
+        'resetLevelsButton': reset_levels_btn,
+        # optional widget - may not exist in older versions
+        'alwaysOnTopCheckBox': always_on_top_cb,
     }
     
     return container, widgets

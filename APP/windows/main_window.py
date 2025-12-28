@@ -1,13 +1,14 @@
 """Main window class for Keong-MAS application."""
 
 import os
+import re
 import sys
 import webbrowser
 import subprocess
 from PySide6.QtCore import Qt, QThread, QTimer, QSize, Signal
 from PySide6.QtGui import QIcon, QColor
 from PySide6.QtWidgets import (
-    QMainWindow, QProgressBar, QMessageBox, QFileDialog, QColorDialog
+    QMainWindow, QProgressBar, QMessageBox, QFileDialog, QColorDialog, QInputDialog
 )
 import qtawesome as qta
 
@@ -31,7 +32,77 @@ from APP.helpers.config_manager import (
 )
 
 from APP.helpers import model_manager
+from PySide6.QtCore import QObject, Slot
+from PySide6.QtCore import Signal as QtSignal
 import threading
+
+
+class MaskWorker(QObject):
+    """Worker to generate mask from a raw original image using rembg in background."""
+    finished = QtSignal(str, str)  # mask_path, ori_path
+    error = QtSignal(str)
+    progress = QtSignal(int, str)
+
+    def __init__(self, image_path, output_dir, model_name=None):
+        super().__init__()
+        self.image_path = image_path
+        self.output_dir = output_dir
+        self.model_name = model_name
+        self.abort = False
+
+    @Slot()
+    def run(self):
+        try:
+            # Ensure output dir exists
+            os.makedirs(self.output_dir, exist_ok=True)
+
+            # Convert input to PNG and save original temp
+            from PIL import Image
+            input_img = Image.open(self.image_path)
+            base = os.path.splitext(os.path.basename(self.image_path))[0]
+            ori_temp = os.path.join(self.output_dir, f'{base}_ori_temp.png')
+            input_img.save(ori_temp)
+
+            # Prepare model (may download)
+            try:
+                self.progress.emit(5, "Menyiapkan model...")
+                prepared = model_manager.prepare_model(model_name=self.model_name)
+            except Exception:
+                prepared = None
+
+            if self.abort:
+                self.progress.emit(0, "Dibatalkan")
+                return
+
+            # Create rembg session and remove mask
+            import rembg
+            self.progress.emit(20, "Memproses: Menghapus latar belakang (mask)...")
+
+            # Prefer direct session if model prepared
+            session = None
+            try:
+                if self.model_name:
+                    session = rembg.new_session(self.model_name)
+                elif prepared:
+                    session = rembg.new_session(prepared)
+            except Exception:
+                try:
+                    session = rembg.new_session()
+                except Exception:
+                    session = None
+
+            mask = rembg.remove(input_img, only_mask=True, session=session)
+            if self.abort:
+                self.progress.emit(0, "Dibatalkan")
+                return
+
+            mask_path = os.path.join(self.output_dir, f'{base}_mask_temp.png')
+            mask.save(mask_path)
+
+            self.progress.emit(100, "Selesai")
+            self.finished.emit(mask_path, ori_temp)
+        except Exception as e:
+            self.error.emit(str(e))
 
 
 class MainWindow(QMainWindow):
@@ -87,6 +158,13 @@ class MainWindow(QMainWindow):
         )
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
+
+        # Run an initial cleanup of old temporary files that may have accumulated
+        try:
+            # Remove very old temp cache files (older than 1 day)
+            self._cleanup_all_old_temp_files(age_seconds=86400)
+        except Exception:
+            pass
     
     def _init_ui(self):
         """Initialize UI components."""
@@ -242,14 +320,17 @@ class MainWindow(QMainWindow):
         if hasattr(self.ui, 'modelComboBox') and self.ui.modelComboBox:
             self.ui.modelComboBox.currentTextChanged.connect(self._on_model_changed)
         
-        if hasattr(self.ui, 'blackPointSlider') and self.ui.blackPointSlider:
-            self.ui.blackPointSlider.valueChanged.connect(self._on_black_point_changed)
-        
-        if hasattr(self.ui, 'midPointSlider') and self.ui.midPointSlider:
-            self.ui.midPointSlider.valueChanged.connect(self._on_mid_point_changed)
-        
-        if hasattr(self.ui, 'whitePointSlider') and self.ui.whitePointSlider:
-            self.ui.whitePointSlider.valueChanged.connect(self._on_white_point_changed)
+        # Multi-handle slider for levels
+        if hasattr(self.ui, 'levelsMultiSlider') and self.ui.levelsMultiSlider:
+            self.ui.levelsMultiSlider.valuesChanged.connect(self._on_levels_changed)
+
+        if hasattr(self.ui, 'configureMaskButton') and self.ui.configureMaskButton:
+            # Use clicked to trigger mask creation or refresh; clicking always initiates mask generation
+            try:
+                self.ui.configureMaskButton.clicked.connect(self._on_configure_mask_clicked)
+            except Exception:
+                # Fallback: connect to toggled handler
+                self.ui.configureMaskButton.toggled.connect(self._on_levels_enabled_changed)
         
         if hasattr(self.ui, 'outputLocationButton') and self.ui.outputLocationButton:
             self.ui.outputLocationButton.clicked.connect(self._on_output_location_clicked)
@@ -259,7 +340,60 @@ class MainWindow(QMainWindow):
         
         if hasattr(self.ui, 'whatsappButton') and self.ui.whatsappButton:
             self.ui.whatsappButton.clicked.connect(self._open_whatsapp)
+        
+        if hasattr(self.ui, 'resetLevelsButton') and self.ui.resetLevelsButton:
+            self.ui.resetLevelsButton.clicked.connect(self._on_reset_levels_clicked)
+
+        # Always on top checkbox
+        if hasattr(self.ui, 'alwaysOnTopCheckBox') and self.ui.alwaysOnTopCheckBox:
+            try:
+                self.ui.alwaysOnTopCheckBox.stateChanged.connect(self._on_always_on_top_changed)
+                # ensure initial click toggles set_mid_manual and is wired
+            except Exception:
+                pass
+
     
+    def _on_reset_levels_clicked(self):
+        """Reset slider levels ke nilai recommended."""
+        try:
+            from APP.helpers.image_utils import get_levels_config
+            rec_black, rec_mid, rec_white = get_levels_config(use_recommended=True)
+        except Exception:
+            rec_black, rec_mid, rec_white = (20, 128, 235)
+
+        try:
+            # Set values on the multi-slider if available
+            try:
+                if hasattr(self.ui, 'levelsMultiSlider') and self.ui.levelsMultiSlider:
+                    self.ui.levelsMultiSlider.setValues(rec_black, rec_mid, rec_white, emit=False)
+                    # Reset mid to auto mode when resetting levels
+                    try:
+                        self.ui.levelsMultiSlider.set_mid_manual(False)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            # Ensure values saved and labels updated
+            try:
+                set_levels_black_point(rec_black)
+                set_levels_mid_point(rec_mid)
+                set_levels_white_point(rec_white)
+            except Exception:
+                pass
+
+            if hasattr(self.ui, 'blackPointValue'):
+                self.ui.blackPointValue.setText(str(rec_black))
+            if hasattr(self.ui, 'midPointValue'):
+                self.ui.midPointValue.setText(str(rec_mid))
+            if hasattr(self.ui, 'whitePointValue'):
+                self.ui.whitePointValue.setText(str(rec_white))
+
+            # Update mask preview jika aktif
+            self._update_mask_preview_if_needed()
+        except Exception as e:
+            print(f"Error resetting levels: {e}")
+
     def _load_settings(self):
         """Load settings from config and apply to UI."""
         if hasattr(self.ui, 'checkBox') and self.ui.checkBox:
@@ -326,23 +460,53 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 print(f"Error populating model list: {str(e)}")
         
-        if hasattr(self.ui, 'blackPointSlider') and self.ui.blackPointSlider:
-            black_point = get_levels_black_point()
-            self.ui.blackPointSlider.setValue(black_point)
+        # Initialize multi-handle slider values from config
+        try:
+            b = get_levels_black_point()
+            m = get_levels_mid_point()
+            w = get_levels_white_point()
+            if hasattr(self.ui, 'levelsMultiSlider') and self.ui.levelsMultiSlider:
+                self.ui.levelsMultiSlider.setValues(b, m, w, emit=False)
             if hasattr(self.ui, 'blackPointValue'):
-                self.ui.blackPointValue.setText(str(black_point))
-        
-        if hasattr(self.ui, 'midPointSlider') and self.ui.midPointSlider:
-            mid_point = get_levels_mid_point()
-            self.ui.midPointSlider.setValue(mid_point)
+                self.ui.blackPointValue.setText(str(b))
             if hasattr(self.ui, 'midPointValue'):
-                self.ui.midPointValue.setText(str(mid_point))
-        
-        if hasattr(self.ui, 'whitePointSlider') and self.ui.whitePointSlider:
-            white_point = get_levels_white_point()
-            self.ui.whitePointSlider.setValue(white_point)
+                self.ui.midPointValue.setText(str(m))
             if hasattr(self.ui, 'whitePointValue'):
-                self.ui.whitePointValue.setText(str(white_point))
+                self.ui.whitePointValue.setText(str(w))
+        except Exception:
+            pass
+        
+        if hasattr(self.ui, 'configureMaskButton') and self.ui.configureMaskButton:
+            # This button is GUI-only and should start unchecked
+            self.ui.configureMaskButton.setChecked(False)
+        # Apply enabled/disabled state to the slider controls
+        self._update_levels_controls()
+
+        # Initialize Always-on-top checkbox from config and apply
+        try:
+            from APP.helpers.config_manager import get_always_on_top
+            if hasattr(self.ui, 'alwaysOnTopCheckBox') and self.ui.alwaysOnTopCheckBox:
+                self.ui.alwaysOnTopCheckBox.setChecked(get_always_on_top())
+                try:
+                    # Apply window flag
+                    self.setWindowFlag(Qt.WindowStaysOnTopHint, get_always_on_top())
+                    # make it effective and bring to front if enabled
+                    if get_always_on_top():
+                        try:
+                            self.show()
+                            self.raise_()
+                            self.activateWindow()
+                        except Exception:
+                            pass
+                    else:
+                        try:
+                            self.show()
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+        except Exception:
+            pass
         
         self._update_output_location_display()
     
@@ -369,6 +533,8 @@ class MainWindow(QMainWindow):
             if hasattr(self.ui, 'blackPointValue'):
                 self.ui.blackPointValue.setText(str(value))
             print(f"Black point set to: {value}")
+            # Realtime update mask preview if in mask mode
+            self._update_mask_preview_if_needed()
         except Exception as e:
             print(f"Error saving black point: {str(e)}")
     
@@ -379,19 +545,410 @@ class MainWindow(QMainWindow):
             if hasattr(self.ui, 'midPointValue'):
                 self.ui.midPointValue.setText(str(value))
             print(f"Mid point set to: {value}")
+            self._update_mask_preview_if_needed()
         except Exception as e:
             print(f"Error saving mid point: {str(e)}")
     
     def _on_white_point_changed(self, value):
-        """Handle white point slider change."""
+        """Compatibility handler for single value changes (kept for backward compatibility)."""
         try:
             set_levels_white_point(value)
             if hasattr(self.ui, 'whitePointValue'):
                 self.ui.whitePointValue.setText(str(value))
             print(f"White point set to: {value}")
+            self._update_mask_preview_if_needed()
         except Exception as e:
             print(f"Error saving white point: {str(e)}")
-    
+
+    def _on_levels_changed(self, black, mid, white):
+        """Handler for combined levels changes from the multi-handle slider."""
+        try:
+            set_levels_black_point(int(black))
+            set_levels_mid_point(int(mid))
+            set_levels_white_point(int(white))
+
+            if hasattr(self.ui, 'blackPointValue'):
+                self.ui.blackPointValue.setText(str(int(black)))
+            if hasattr(self.ui, 'midPointValue'):
+                self.ui.midPointValue.setText(str(int(mid)))
+            if hasattr(self.ui, 'whitePointValue'):
+                self.ui.whitePointValue.setText(str(int(white)))
+
+            # Realtime update mask preview if in mask mode
+            self._update_mask_preview_if_needed()
+        except Exception as e:
+            print(f"Error saving levels: {str(e)}")
+
+    def _update_mask_preview_if_needed(self):
+        """Update mask preview in realtime if in mask mode."""
+        if not getattr(self.image_preview, 'mask_mode', False):
+            return
+        # Only update if mask_mode is True and mask_before_path exists
+        mask_before = getattr(self.image_preview, 'mask_before_path', None)
+        mask_adj_temp = None
+        if not mask_before or not os.path.exists(mask_before):
+            return
+        # Path for adjusted mask
+        base = os.path.splitext(os.path.basename(mask_before))[0].replace('_mask_temp','')
+        temp_dir = os.path.join(os.path.dirname(__file__), '../../temp')
+        import time
+        mask_adj_temp = os.path.join(temp_dir, f'{base}_mask_adj_temp_{int(time.time()*1000)}.png')
+        try:
+            from APP.helpers.image_utils import apply_levels_to_mask
+            from PIL import Image
+            import time
+            mask_img = Image.open(mask_before)
+            black = get_levels_black_point()
+            mid = get_levels_mid_point()
+            white = get_levels_white_point()
+            # Determine if we should use binary mask for extreme settings (match the real processing logic)
+            try:
+                using_extreme_settings = (white < 10) or (black > 240) or (mid < 10)
+            except Exception:
+                using_extreme_settings = False
+
+            if using_extreme_settings:
+                from APP.helpers.image_utils import create_binary_mask
+                # Choose threshold similarly to the main processing
+                threshold = 127
+                if white < 10:
+                    threshold = max(10, white * 10)
+                elif black > 240:
+                    threshold = min(240, black)
+                mask_adj = create_binary_mask(mask_img, threshold=threshold)
+            else:
+                mask_adj = apply_levels_to_mask(mask_img, black, mid, white)
+
+            # Save adjusted mask to a uniquely named temp file so preview always reloads
+            unique_mask_adj = os.path.join(temp_dir, f'{base}_mask_adj_temp_{int(time.time()*1000)}.png')
+            mask_adj.save(unique_mask_adj)
+
+            # Cleanup older temp-adjust files for this base (keep the one we just saved)
+            try:
+                self._cleanup_temp_mask_adj_files(base, keep_filename=unique_mask_adj, age_seconds=60)
+            except Exception:
+                pass
+
+            # Show the adjusted mask right away (switch to adjusted view so sliders take effect immediately)
+            self.image_preview.set_mask_images(mask_before, unique_mask_adj, preserve_zoom=True, show_before=False)
+            try:
+                # Ensure the after/adjusted image is visible without any user interaction
+                self.image_preview.show_after()
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"Error realtime mask preview: {e}")
+    def _on_mask_progress(self, value, message):
+        """Update UI progress for mask generation."""
+        try:
+            if not hasattr(self, 'progress_bar'):
+                return
+            if value is None or value == 0:
+                self.progress_bar.setRange(0, 0)
+                self.progress_bar.show()
+                self.progress_bar.setFormat(message)
+            else:
+                self.progress_bar.setRange(0, 100)
+                self.progress_bar.setValue(int(value))
+                if message:
+                    self.progress_bar.setFormat(message)
+                if int(value) >= 100:
+                    QTimer.singleShot(500, lambda: self.progress_bar.hide())
+        except Exception:
+            pass
+
+    def _on_mask_generated(self, mask_path, ori_path):
+        """Handle mask generated from worker."""
+        try:
+            # Stop thread
+            try:
+                if hasattr(self, '_mask_thread') and self._mask_thread:
+                    self._mask_thread.quit()
+                    if not self._mask_thread.wait(500):
+                        self._mask_thread.terminate()
+                        self._mask_thread.wait()
+            except Exception:
+                pass
+
+            # Hide busy indicator
+            try:
+                if hasattr(self, 'progress_bar'):
+                    self.progress_bar.hide()
+            except Exception:
+                pass
+
+            # Mark as not in progress
+            try:
+                self._mask_in_progress = False
+            except Exception:
+                pass
+
+            # Re-enable the configure button now that worker finished
+            try:
+                if hasattr(self.ui, 'configureMaskButton') and self.ui.configureMaskButton:
+                    self.ui.configureMaskButton.setEnabled(True)
+            except Exception:
+                pass
+
+            # Generate adjusted mask and display
+            try:
+                from APP.helpers.image_utils import apply_levels_to_mask
+                from PIL import Image
+                mask_img = Image.open(mask_path)
+                black = get_levels_black_point()
+                mid = get_levels_mid_point()
+                white = get_levels_white_point()
+                mask_adj = apply_levels_to_mask(mask_img, black, mid, white)
+
+                base = os.path.splitext(os.path.basename(mask_path))[0].replace('_mask_temp','')
+                temp_dir = os.path.dirname(mask_path)
+                import time
+                mask_adj_temp = os.path.join(temp_dir, f'{base}_mask_adj_temp_{int(time.time()*1000)}.png')
+                mask_adj.save(mask_adj_temp)
+
+                # Cleanup older temp-adjust files for this base (keep the one we just saved)
+                try:
+                    self._cleanup_temp_mask_adj_files(base, keep_filename=mask_adj_temp, age_seconds=60)
+                except Exception:
+                    pass
+
+                # Display mask preview (start showing before by default for a freshly generated mask)
+                show_before = True
+                self.image_preview.set_mask_images(mask_path, mask_adj_temp, preserve_zoom=True, show_before=show_before)
+
+                # If Ubah Levels is active, ensure sliders are enabled and apply current slider values to refresh preview
+                try:
+                    if hasattr(self.ui, 'configureMaskButton') and self.ui.configureMaskButton and self.ui.configureMaskButton.isChecked():
+                        self._update_levels_controls()
+                        # Force an immediate update using current slider values (this will also show the adjusted mask)
+                        self._update_mask_preview_if_needed()
+                        # Also explicitly trigger handlers to ensure preview updates even if slider values didn't change
+                        try:
+                            # Update labels and config from the multi-handle slider
+                            try:
+                                if hasattr(self.ui, 'levelsMultiSlider') and self.ui.levelsMultiSlider:
+                                    b,m,w = self.ui.levelsMultiSlider.getValues()
+                                    self._on_levels_changed(b, m, w)
+                            except Exception:
+                                pass
+                        except Exception:
+                            pass
+                except Exception as e:
+                    print(f"Error applying sliders after mask generation: {e}")
+
+                # Clean up temporary files for this base (do not remove very recent ones)
+                try:
+                    try:
+                        base_cleanup = os.path.splitext(os.path.basename(mask_path))[0].replace('_mask_temp','')
+                    except Exception:
+                        base_cleanup = None
+                    if base_cleanup:
+                        self._cleanup_temp_mask_adj_files(base_cleanup, keep_filename=mask_adj_temp, age_seconds=60)
+                except Exception:
+                    pass
+            except Exception as e:
+                print(f"Error creating adjusted mask after generation: {e}")
+                QMessageBox.warning(self, "Error", f"Gagal membuat preview mask: {e}")
+        except Exception as e:
+            print(f"Error in _on_mask_generated: {e}")
+
+    def _on_mask_error(self, msg):
+        """Handle mask worker error: show message, uncheck box and cleanup."""
+        try:
+            QMessageBox.warning(self, 'Error', f"Gagal membuat mask: {msg}")
+        except Exception:
+            pass
+        try:
+            # Unset in-progress flag
+            try:
+                self._mask_in_progress = False
+            except Exception:
+                pass
+            # Revert checkbox to unchecked in a deterministic way
+            self._set_levels_checkbox_state(False, block_signals=True, update_controls=True)
+            # Ensure button is enabled so the user can try again
+            try:
+                if hasattr(self.ui, 'configureMaskButton') and self.ui.configureMaskButton:
+                    self.ui.configureMaskButton.setEnabled(True)
+            except Exception:
+                pass
+        except Exception:
+            pass
+        try:
+            if hasattr(self, 'progress_bar'):
+                self.progress_bar.hide()
+        except Exception:
+            pass
+
+    def _on_configure_mask_clicked(self, checked=False):
+        """Clicked handler for the configure mask button. Always starts/restarts mask generation and keeps the button checked."""
+        try:
+            # Keep the button checked to indicate mask/adjust mode
+            self._set_levels_checkbox_state(True, block_signals=True, update_controls=True)
+
+            # If a worker is already running, inform the user and don't start another
+            if getattr(self, '_mask_in_progress', False):
+                try:
+                    QMessageBox.information(self, "Tunggu", "Proses pembuatan mask sedang berjalan. Silakan tunggu hingga selesai.")
+                except Exception:
+                    pass
+                return
+
+            # Start (or restart) the mask worker
+            self._start_mask_worker()
+        except Exception as e:
+            print(f"Error in _on_configure_mask_clicked: {e}")
+            try:
+                self._set_levels_checkbox_state(False, block_signals=True, update_controls=True)
+            except Exception:
+                pass
+
+    def _start_mask_worker(self, current_path=None):
+        """Start the MaskWorker using selected/current preview file, prompting user if needed.
+
+        If current_path is provided it will be used; otherwise the function picks a sensible source.
+        """
+        try:
+            # Determine path to use
+            chosen = None
+            try:
+                if current_path:
+                    chosen = current_path
+                else:
+                    selected = self.file_table.selectionModel().selectedRows()
+                    if selected:
+                        chosen = self.file_table.get_file_path(selected[0].row())
+            except Exception:
+                chosen = None
+
+            # Fallback to current preview file
+            if not chosen:
+                try:
+                    chosen = self.image_preview.get_current_file_path()
+                except Exception:
+                    chosen = None
+
+            # Helper to detect processed outputs
+            def looks_like_processed(p):
+                if not p:
+                    return False
+                name = os.path.basename(p).lower()
+                return ('_transparent' in name) or ('_mask' in name) or ('_mask_adjusted' in name) or name.endswith('_transparent.png')
+
+            if looks_like_processed(chosen):
+                stem = os.path.splitext(os.path.basename(chosen))[0]
+                stem = re.sub(r'(_transparent.*|_mask.*|_mask_adjusted.*)$', r'', stem, flags=re.IGNORECASE)
+                found = None
+                for r in range(self.file_table.rowCount()):
+                    candidate = self.file_table.get_file_path(r)
+                    if candidate and os.path.splitext(os.path.basename(candidate))[0].lower() == stem.lower():
+                        found = candidate
+                        break
+                if found:
+                    chosen = found
+
+            # If still no usable original, ask user to pick from loaded files
+            if not chosen or not os.path.exists(chosen):
+                try:
+                    ret = QMessageBox.question(
+                        self,
+                        "Tidak ada gambar",
+                        "Tidak ada gambar asli yang cocok untuk preview mask. Pilih file sumber dari daftar ter-load?",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                    )
+                except Exception:
+                    ret = QMessageBox.StandardButton.No
+
+                if ret == QMessageBox.StandardButton.Yes:
+                    row_count = self.file_table.rowCount()
+                    if row_count <= 0:
+                        QMessageBox.warning(self, "Tidak ada file ter-load", "Tidak ada file pada daftar. Silakan muat file ke daftar dan pilih satu terlebih dahulu.")
+                        self._set_levels_checkbox_state(False, block_signals=True, update_controls=True)
+                        return
+                    items = []
+                    path_map = []
+                    for r in range(row_count):
+                        p = self.file_table.get_file_path(r)
+                        if p and os.path.exists(p):
+                            items.append(os.path.basename(p))
+                            path_map.append(p)
+                    if not items:
+                        QMessageBox.warning(self, "Tidak ada file tersedia", "Tidak ada file yang dapat dipilih. Silakan periksa daftar file.")
+                        self._set_levels_checkbox_state(False, block_signals=True, update_controls=True)
+                        return
+                    item, ok = QInputDialog.getItem(self, "Pilih file sumber", "Pilih file dari daftar ter-load:", items, 0, False)
+                    if not ok or not item:
+                        # User cancelled — revert and keep preview/zoom unchanged
+                        self._set_levels_checkbox_state(False, block_signals=True, update_controls=True)
+                        return
+                    idx = items.index(item)
+                    chosen = path_map[idx]
+                else:
+                    # User chose No — revert and keep preview
+                    self._set_levels_checkbox_state(False, block_signals=True, update_controls=True)
+                    return
+
+            # Start worker using chosen
+            temp_dir = os.path.join(os.path.dirname(__file__), '../../temp')
+            os.makedirs(temp_dir, exist_ok=True)
+
+            # Abort previous worker if running
+            try:
+                if hasattr(self, '_mask_thread') and self._mask_thread and self._mask_thread.isRunning():
+                    try:
+                        self._mask_worker.abort = True
+                    except Exception:
+                        pass
+                    try:
+                        self._mask_thread.quit()
+                        self._mask_thread.wait(200)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            model_name = self.ui.modelComboBox.currentText() if hasattr(self.ui, 'modelComboBox') and self.ui.modelComboBox else None
+            self._mask_worker = MaskWorker(chosen, temp_dir, model_name=model_name)
+            self._mask_thread = QThread()
+            self._mask_worker.moveToThread(self._mask_thread)
+            self._mask_thread.started.connect(self._mask_worker.run)
+            self._mask_worker.finished.connect(self._on_mask_generated)
+            self._mask_worker.error.connect(self._on_mask_error)
+            self._mask_worker.progress.connect(self._on_mask_progress)
+
+            # Mark and start
+            self._mask_in_progress = True
+            try:
+                if hasattr(self.ui, 'configureMaskButton') and self.ui.configureMaskButton:
+                    self.ui.configureMaskButton.setEnabled(False)
+            except Exception:
+                pass
+
+            # quick cleanup
+            try:
+                base = os.path.splitext(os.path.basename(chosen))[0]
+                self._cleanup_temp_mask_adj_files(base, keep_filename=None, age_seconds=3600)
+            except Exception:
+                pass
+
+            if hasattr(self, 'progress_bar'):
+                self.progress_bar.setRange(0, 0)
+                self.progress_bar.show()
+
+            try:
+                self._update_levels_controls()
+            except Exception:
+                pass
+
+            self._mask_thread.start()
+
+        except Exception as e:
+            print(f"_start_mask_worker error: {e}")
+            try:
+                self._set_levels_checkbox_state(False, block_signals=True, update_controls=True)
+            except Exception:
+                pass
+
     def _update_color_button(self, color_hex):
         """Update color picker button background."""
         if hasattr(self.ui, 'colorPickerButton') and self.ui.colorPickerButton:
@@ -421,7 +978,301 @@ class MainWindow(QMainWindow):
             
             if hasattr(self.ui, 'jpgQualityLabel') and self.ui.jpgQualityLabel:
                 self.ui.jpgQualityLabel.setEnabled(is_enabled)
-    
+
+    def _update_levels_controls(self):
+        """Enable or disable levels sliders and value labels according to the checkbox."""
+        is_enabled = False
+        if hasattr(self.ui, 'configureMaskButton') and self.ui.configureMaskButton:
+            is_enabled = self.ui.configureMaskButton.isChecked()
+
+        names = (
+            'blackPointSlider', 'midPointSlider', 'whitePointSlider',
+            'blackPointValue', 'midPointValue', 'whitePointValue'
+        )
+
+        for name in names:
+            if hasattr(self.ui, name) and getattr(self.ui, name):
+                try:
+                    getattr(self.ui, name).setEnabled(is_enabled)
+                except Exception:
+                    pass
+
+    def _on_always_on_top_changed(self, state):
+        """Handle Always-on-top checkbox change and persist the value."""
+        is_checked = (state != 0)
+        try:
+            from APP.helpers.config_manager import set_always_on_top
+            set_always_on_top(is_checked)
+        except Exception:
+            pass
+        try:
+            # Apply window flag and ensure window updates
+            self.setWindowFlag(Qt.WindowStaysOnTopHint, is_checked)
+            # If enabling, bring window to front; if disabling, ensure flag cleared
+            try:
+                if is_checked:
+                    self.show()
+                    self.raise_()
+                    self.activateWindow()
+                else:
+                    self.show()
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _set_levels_checkbox_state(self, checked, block_signals=True, update_controls=True):
+        """Set the configure mask button state programmatically, with optional signal blocking and UI updates."""
+        if not (hasattr(self.ui, 'configureMaskButton') and self.ui.configureMaskButton):
+            return
+        try:
+            if block_signals:
+                self.ui.configureMaskButton.blockSignals(True)
+            self.ui.configureMaskButton.setChecked(bool(checked))
+            if block_signals:
+                self.ui.configureMaskButton.blockSignals(False)
+            if update_controls:
+                try:
+                    self._update_levels_controls()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def _cleanup_temp_mask_adj_files(self, base, keep_filename=None, age_seconds=300):
+        """Remove old temporary adjusted mask files for a given base name in temp dir.
+
+        Args:
+            base (str): base filename (without suffix) to match
+            keep_filename (str|None): full path to keep (do not delete)
+            age_seconds (int): minimum age in seconds to remove files
+        """
+        try:
+            temp_dir = os.path.join(os.path.dirname(__file__), '../../temp')
+            if not os.path.exists(temp_dir):
+                return
+            now = None
+            try:
+                import time
+                now = time.time()
+            except Exception:
+                now = None
+            for fname in os.listdir(temp_dir):
+                if not fname.startswith(f"{base}_"):
+                    continue
+                full = os.path.join(temp_dir, fname)
+                if keep_filename and os.path.abspath(full) == os.path.abspath(keep_filename):
+                    continue
+                # Only target known temp patterns we create
+                if not ("mask_adj_temp_" in fname or fname.endswith('_ori_temp.png') or fname.endswith('_mask_temp.png')):
+                    continue
+                try:
+                    # If age_seconds is set, only remove files older than age_seconds
+                    if now is not None:
+                        mtime = os.path.getmtime(full)
+                        if (now - mtime) < age_seconds:
+                            # too new, skip for now
+                            continue
+                    os.remove(full)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def _cleanup_all_old_temp_files(self, age_seconds=86400):
+        """Remove any old temp files we previously left around (mask_adj_temp, ori_temp, mask_temp)."""
+        try:
+            temp_dir = os.path.join(os.path.dirname(__file__), '../../temp')
+            if not os.path.exists(temp_dir):
+                return
+            now = None
+            try:
+                import time
+                now = time.time()
+            except Exception:
+                now = None
+            for fname in os.listdir(temp_dir):
+                full = os.path.join(temp_dir, fname)
+                if not ("mask_adj_temp_" in fname or fname.endswith('_ori_temp.png') or fname.endswith('_mask_temp.png')):
+                    continue
+                try:
+                    if now is not None:
+                        mtime = os.path.getmtime(full)
+                        if (now - mtime) < age_seconds:
+                            continue
+                    os.remove(full)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def _cleanup_temp_on_exit(self):
+        """Immediate cleanup of the temp folder used by the app. Removes files and subfolders left in temp.
+
+        This is called on application close to ensure no leftover temporary files remain.
+        """
+        try:
+            temp_dir = os.path.join(os.path.dirname(__file__), '../../temp')
+            if not os.path.exists(temp_dir):
+                return
+            import shutil
+            for fname in os.listdir(temp_dir):
+                full = os.path.join(temp_dir, fname)
+                try:
+                    if os.path.isfile(full) or os.path.islink(full):
+                        os.remove(full)
+                    elif os.path.isdir(full):
+                        shutil.rmtree(full, ignore_errors=True)
+                except Exception:
+                    pass
+            # Attempt to remove the temp directory itself if empty
+            try:
+                os.rmdir(temp_dir)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _on_levels_enabled_changed(self, state):
+        """Handle 'Ubah Levels' checkbox change (GUI-only)."""
+        is_checked = (state != 0)
+        print(f"Levels enabled changed - Interpreted as: {'checked' if is_checked else 'unchecked'}")
+        try:
+            # If a mask generation is already in progress, ignore repeat checks and inform user
+            if getattr(self, '_mask_in_progress', False) and is_checked:
+                try:
+                    QMessageBox.information(self, "Tunggu", "Proses pembuatan mask sedang berjalan. Silakan tunggu hingga selesai sebelum mengaktifkan lagi.")
+                except Exception:
+                    pass
+                # Revert the checkbox to unchecked in deterministic way
+                try:
+                    self._set_levels_checkbox_state(False, block_signals=True, update_controls=True)
+                except Exception:
+                    pass
+                return
+
+            self._update_levels_controls()
+            print(f"Levels GUI state updated: {is_checked}")
+        except Exception as e:
+            print(f"Error updating levels controls: {str(e)}")
+            QMessageBox.warning(self, "Error", f"Gagal mengupdate UI Levels: {str(e)}")
+
+# If checkbox was unchecked, abort any running worker and restore preview (preserve zoom)
+        if not is_checked:
+            try:
+                if hasattr(self, '_mask_thread') and self._mask_thread and self._mask_thread.isRunning():
+                    try:
+                        self._mask_worker.abort = True
+                    except Exception:
+                        pass
+                    try:
+                        self._mask_thread.quit()
+                        self._mask_thread.wait(200)
+                    except Exception:
+                        pass
+                # Reset in-progress flag
+                try:
+                    self._mask_in_progress = False
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            # Hide progress bar
+            try:
+                if hasattr(self, 'progress_bar'):
+                    self.progress_bar.hide()
+            except Exception:
+                pass
+            # Restore normal image preview - preserve zoom
+            try:
+                if self.image_preview.before_path:
+                    self.image_preview.set_images(self.image_preview.before_path, self.image_preview.after_path, preserve_zoom=True)
+            except Exception:
+                pass
+            return
+
+        # --- Custom logic for mask preview ---
+        if is_checked:
+            # Delegate to a helper that starts the mask worker and handles UI state
+            try:
+                self._start_mask_worker()
+            except Exception as e:
+                print(f"Error starting mask flow: {e}")
+                try:
+                    self._set_levels_checkbox_state(False, block_signals=True, update_controls=True)
+                except Exception:
+                    pass
+            return
+
+            # Proses rembg untuk masking ke temp (jika belum ada)
+            import time
+            from APP.helpers import image_utils
+            temp_dir = os.path.join(os.path.dirname(__file__), '../../temp')
+            os.makedirs(temp_dir, exist_ok=True)
+            base = os.path.splitext(os.path.basename(current_path))[0]
+            ori_temp = os.path.join(temp_dir, f'{base}_ori_temp.png')
+            mask_temp = os.path.join(temp_dir, f'{base}_mask_temp.png')
+            import time
+            mask_adj_temp = os.path.join(temp_dir, f'{base}_mask_adj_temp_{int(time.time()*1000)}.png')
+
+            # Only reprocess if not already exists
+            if not (os.path.exists(ori_temp) and os.path.exists(mask_temp)):
+                try:
+                    # Use rembg to get mask (only_mask=True)
+                    import rembg
+                    from PIL import Image
+                    input_img = Image.open(current_path)
+                    # Save ori to temp
+                    input_img.save(ori_temp)
+                    # Get mask
+                    mask_img = rembg.remove(input_img, only_mask=True)
+                    mask_img.save(mask_temp)
+                    # Keep original mask as-is for preview (do not invert)
+                    pass
+                except Exception as e:
+                    print(f"Error rembg mask preview: {e}")
+                    QMessageBox.warning(self, "Error", f"Gagal membuat mask preview: {e}")
+                    return
+
+            # Proses adjustment levels ke mask_adj_temp
+            try:
+                from APP.helpers.image_utils import apply_levels_to_mask
+                from PIL import Image
+                mask_img = Image.open(mask_temp)
+                black = get_levels_black_point()
+                mid = get_levels_mid_point()
+                white = get_levels_white_point()
+                # Mirror the real processing behaviour for extreme values
+                using_extreme_settings = (white < 10) or (black > 240) or (mid < 10)
+                if using_extreme_settings:
+                    from APP.helpers.image_utils import create_binary_mask
+                    threshold = 127
+                    if white < 10:
+                        threshold = max(10, white * 10)
+                    elif black > 240:
+                        threshold = min(240, black)
+                    mask_adj = create_binary_mask(mask_img, threshold=threshold)
+                else:
+                    mask_adj = apply_levels_to_mask(mask_img, black, mid, white)
+                # Save to uniquely named file so preview updates correctly (avoid QPixmap caching)
+                unique_mask_adj = os.path.join(temp_dir, f'{base}_mask_adj_temp_{int(time.time()*1000)}.png')
+                mask_adj.save(unique_mask_adj)
+                mask_adj_temp = unique_mask_adj
+            except Exception as e:
+                print(f"Error adjust mask preview: {e}")
+                QMessageBox.warning(self, "Error", f"Gagal membuat mask adjustment: {e}")
+                return
+
+            # Tampilkan mask ori dan mask hasil adjustment di preview
+            show_before = getattr(self.image_preview, 'showing_before', True)
+            self.image_preview.set_mask_images(mask_temp, mask_adj_temp, preserve_zoom=True, show_before=show_before)
+        else:
+            # Kembali ke mode preview gambar normal
+            if self.image_preview.before_path:
+                self.image_preview.set_images(self.image_preview.before_path, self.image_preview.after_path)
+            else:
+                self.image_preview.clear()
+
     def _on_auto_crop_changed(self, state):
         """Handle auto crop checkbox state change."""
         is_checked = (state != 0)
@@ -978,7 +1829,7 @@ class MainWindow(QMainWindow):
         self._reset_ui_state()
 
     def closeEvent(self, event):
-        """Save current model selection on close to ensure persistence."""
+        """Save current model selection on close to ensure persistence. Reset levels_enabled to False."""
         try:
             if hasattr(self.ui, 'modelComboBox') and self.ui.modelComboBox:
                 current = self.ui.modelComboBox.currentText()
@@ -989,7 +1840,7 @@ class MainWindow(QMainWindow):
                         set_selected_model(current)
                         print(f"Saved model selection on close: {current}")
                 except Exception as e:
-                    print(f"Warning: failed to save selected model on close: {str(e)}")
+                    print(f"Warning: failed to save selected model or reset levels_enabled on close: {str(e)}")
         except Exception:
             pass
         finally:
@@ -1091,12 +1942,57 @@ class MainWindow(QMainWindow):
             )
     
     def closeEvent(self, event):
-        """Handle window close event to save current model selection."""
+        """Handle window close event to save current model selection, abort workers, and clean temp files."""
         try:
             if hasattr(self.ui, 'modelComboBox') and self.ui.modelComboBox:
                 current_model = self.ui.modelComboBox.currentText()
                 if current_model:
                     set_selected_model(current_model)
-        except Exception as e:
+            # No persistence for 'Ubah Levels' - it's GUI-only, so nothing else to save on close
+        except Exception:
             pass
-        super().closeEvent(event)
+
+        # Attempt to gracefully abort any running workers/threads
+        try:
+            # Main processing worker
+            try:
+                if hasattr(self, 'worker') and self.worker:
+                    try:
+                        self.worker.abort = True
+                    except Exception:
+                        pass
+                if hasattr(self, 'thread') and self.thread and getattr(self.thread, 'isRunning', lambda: False)():
+                    try:
+                        self.thread.quit()
+                        self.thread.wait(500)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            # Mask worker
+            try:
+                if hasattr(self, '_mask_worker') and self._mask_worker:
+                    try:
+                        self._mask_worker.abort = True
+                    except Exception:
+                        pass
+                if hasattr(self, '_mask_thread') and self._mask_thread and getattr(self._mask_thread, 'isRunning', lambda: False)():
+                    try:
+                        self._mask_thread.quit()
+                        self._mask_thread.wait(500)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        # Remove temporary files immediately to leave no leftover junk
+        try:
+            self._cleanup_temp_on_exit()
+        except Exception:
+            pass
+
+        finally:
+            super().closeEvent(event)

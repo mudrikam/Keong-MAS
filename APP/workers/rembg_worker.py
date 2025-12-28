@@ -10,10 +10,10 @@ import rembg
 from APP.helpers import model_manager
 from APP.helpers.config_manager import (
     get_save_mask_enabled, get_auto_crop_enabled, get_unified_margin, get_solid_bg_enabled,
-    get_selected_model
+    get_selected_model, get_levels_black_point, get_levels_mid_point, get_levels_white_point
 )
 
-from APP.helpers.image_utils import enhance_transparency_with_levels, get_levels_config, cleanup_original_temp_files
+from APP.helpers.image_utils import enhance_transparency_with_levels, cleanup_original_temp_files
 from APP.helpers.image_crop import crop_transparent_image
 from APP.helpers.solid_background import add_solid_background
 from APP.helpers.jpg_converter import process_jpg_conversion
@@ -386,7 +386,10 @@ class RemBgWorker(QObject):
             self.progress.emit(70, f"Menghasilkan gambar transparan yang disempurnakan...", image_path)
             
             save_mask = get_save_mask_enabled()
-            black_point, mid_point, white_point = get_levels_config(use_recommended=False)
+            # Use current runtime values saved by the sliders (so processing matches preview)
+            black_point = get_levels_black_point()
+            mid_point = get_levels_mid_point()
+            white_point = get_levels_white_point()
             
             self.progress.emit(65, f"Menghasilkan mask yang diatur levels-nya...", image_path)
             print(f"Langkah 1: Menerapkan levels adjustment pada mask...")

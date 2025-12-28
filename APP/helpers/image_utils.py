@@ -85,10 +85,7 @@ def create_binary_mask(mask_image, threshold=128):
     # Convert to numpy array for faster processing
     mask_array = np.array(mask, dtype=np.uint8)
     
-    # Original min/max for logging
-    original_min = np.min(mask_array)
-    original_max = np.max(mask_array)
-    print(f"Original mask range: {original_min}-{original_max}")
+    # Original min/max (kept for potential debugging, printing removed)
     
     # Create binary mask - all values below threshold become 0, all above become 255
     binary_mask = np.zeros_like(mask_array)
@@ -167,10 +164,7 @@ def enhance_transparency(image_path, mask_path, output_suffix="_enhanced"):
     Returns:
         str: Path to the generated enhanced transparent image
     """
-    print(f"Memproses enhance_transparency:")
-    print(f"- Image path: {image_path}")
-    print(f"- Mask path: {mask_path}")
-    print(f"- Output suffix: {output_suffix}")
+
     
     try:
         # Verify files exist
@@ -199,8 +193,7 @@ def enhance_transparency(image_path, mask_path, output_suffix="_enhanced"):
         # Import numpy untuk operasi array
         import numpy as np
         
-        # Tambahkan log untuk debug
-        print(f"Mask min/max sebelum: {np.min(np.array(mask))}/{np.max(np.array(mask))}")
+        # Mask min/max debug printing removed
         
         # Pastikan mask tidak terbalik: 255 (putih) harus mewakili area yang ingin dipertahankan
         # rembg mask: putih = objek, hitam = background, ini sudah benar
@@ -212,8 +205,7 @@ def enhance_transparency(image_path, mask_path, output_suffix="_enhanced"):
         # Gunakan mask langsung sebagai alpha channel
         new_alpha = mask
         
-        # Log nilai alpha untuk debug
-        print(f"Alpha min/max: {np.min(np.array(new_alpha))}/{np.max(np.array(new_alpha))}")
+        # Alpha min/max debug printing removed
         
         # Merge the channels back together
         result = Image.merge("RGBA", (r, g, b, new_alpha))
@@ -234,88 +226,10 @@ def enhance_transparency(image_path, mask_path, output_suffix="_enhanced"):
 
 
 def apply_levels_to_mask(mask_image, black_point=DEFAULT_BLACK_POINT, mid_point=DEFAULT_MID_POINT, white_point=DEFAULT_WHITE_POINT):
+    """Public wrapper for levels adjustment. Delegates to the internal implementation so
+    preview and real processing share identical math.
     """
-    Applies levels adjustment to a mask image, similar to Photoshop levels sliders.
-    
-    Args:
-        mask_image (PIL.Image): The mask image to adjust
-        black_point (int): The black point slider (0-255) - higher values make more pixels become transparent
-                          Default 0 = no change to shadows
-        mid_point (int): The gamma/midtone slider (0-255) - adjusts the midtones
-                        Default 128 = no change to midtones
-        white_point (int): The white point slider (0-255) - lower values make more pixels become opaque
-                          Default 255 = no change to highlights
-        
-    Returns:
-        PIL.Image: The adjusted mask image
-    """
-    import numpy as np
-    from PIL import Image, ImageOps
-    
-    # Ensure mask is in grayscale mode
-    mask = mask_image.convert("L")
-    
-    # Convert to numpy array for faster processing
-    mask_array = np.array(mask, dtype=np.float32)
-    
-    # Original min/max for logging
-    original_min = np.min(mask_array)
-    original_max = np.max(mask_array)
-    print(f"Original mask range: {original_min}-{original_max}")
-    
-    # Full input and output ranges (don't change these)
-    INPUT_MIN = 0
-    INPUT_MAX = 255
-    OUTPUT_MIN = 0
-    OUTPUT_MAX = 255
-    
-    # Calculate the Photoshop-like levels adjustments
-    # Where black_point/white_point are slider values rather than absolute thresholds
-    
-    # Convert slider values to actual input mapping ranges
-    # Higher black_point = more pixels become black/transparent
-    # Lower white_point = more pixels become white/opaque
-    input_black = black_point  # Slider directly controls cutoff
-    input_white = white_point  # Slider directly controls cutoff
-    
-    # Log the calculated ranges
-    print(f"Input mapping: {input_black} to {input_white}")
-    
-    # Apply levels formula:
-    # 1. Clip input values to our desired range
-    # 2. Scale to 0-1 based on the input range we want to map
-    mask_array = np.clip(mask_array, input_black, input_white)
-    mask_array = (mask_array - input_black) / max(1, (input_white - input_black))  # Avoid division by zero
-    
-    # Apply gamma correction using mid_point
-    # A midpoint of 128 means gamma = 1.0 (no change)
-    if mid_point != 128:
-        # Convert midpoint slider (0-255) to gamma value
-        # Using standard Photoshop-like formula
-        gamma = 1.0
-        if mid_point < 128:
-            gamma = 1.0 + (128.0 - mid_point) / 128.0  # Gamma > 1 darkens midtones
-        else:
-            gamma = 128.0 / mid_point  # Gamma < 1 brightens midtones
-        
-        # Apply gamma correction
-        mask_array = np.power(mask_array, gamma)
-    
-    # Scale back to 0-255 range
-    mask_array = mask_array * 255.0
-    
-    # Ensure values are within valid range
-    mask_array = np.clip(mask_array, 0, 255).astype(np.uint8)
-    
-    # New min/max for logging
-    new_min = np.min(mask_array)
-    new_max = np.max(mask_array)
-    print(f"Adjusted mask range: {new_min}-{new_max}")
-    
-    # Convert back to PIL Image
-    adjusted_mask = Image.fromarray(mask_array)
-    
-    return adjusted_mask
+    return _apply_levels_to_mask_impl(mask_image, black_point, mid_point, white_point)
 
 
 def cleanup_original_temp_files(original_transparent_path, original_mask_path):
@@ -344,6 +258,68 @@ def cleanup_temp_files(original_transparent_path, original_mask_path, adjusted_m
     # Handle adjusted mask
     if adjusted_mask_path:
         cleanup_adjusted_mask_if_safe(adjusted_mask_path)
+
+import math
+
+def _apply_levels_to_mask_impl(mask_image, black_point, mid_point, white_point):
+    """Internal implementation of levels adjustment used by public wrapper.
+
+    Uses the original Photoshop-like approach (clip, normalize to 0-1, apply simple gamma mapping
+    using a piecewise formula where midpoint <128 increases gamma and midpoint>128 reduces gamma).
+    This matches the original function that was present before and preserves expected behavior.
+    """
+    import numpy as np
+    from PIL import Image, ImageOps
+
+    # Ensure mask is in grayscale mode and convert to float array
+    if isinstance(mask_image, str):
+        if not os.path.exists(mask_image):
+            raise FileNotFoundError(f"Mask file not found: {mask_image}")
+        mask = Image.open(mask_image).convert('L')
+    else:
+        mask = mask_image.convert('L')
+
+    mask_array = np.array(mask, dtype=np.float32)
+
+    # Original range computation kept for internal use (printing removed)
+    try:
+        original_min = np.min(mask_array)
+        original_max = np.max(mask_array)
+    except Exception:
+        original_min = 0.0
+        original_max = 255.0
+
+    input_black = float(black_point)
+    input_white = float(white_point)
+
+
+
+    # Clip and normalize
+    mask_array = np.clip(mask_array, input_black, input_white)
+    mask_array = (mask_array - input_black) / max(1.0, (input_white - input_black))
+
+    # Apply simple piecewise gamma mapping based on midpoint
+    if mid_point != 128:
+        gamma = 1.0
+        if mid_point < 128:
+            gamma = 1.0 + (128.0 - mid_point) / 128.0
+        else:
+            gamma = 128.0 / float(mid_point)
+        mask_array = np.power(mask_array, gamma)
+
+    # Scale back to 0-255 and clip
+    mask_array = mask_array * 255.0
+    mask_array = np.clip(mask_array, 0, 255).astype(np.uint8)
+
+    try:
+        new_min = np.min(mask_array)
+        new_max = np.max(mask_array)
+    except Exception:
+        new_min = 0
+        new_max = 255
+
+    return Image.fromarray(mask_array)
+
 
 def enhance_transparency_with_levels(image_path, mask_path, output_suffix="_transparent", 
                                    black_point=DEFAULT_BLACK_POINT, mid_point=DEFAULT_MID_POINT, white_point=DEFAULT_WHITE_POINT, 

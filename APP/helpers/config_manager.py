@@ -44,7 +44,8 @@ DEFAULT_CONFIG = {
         "color": "#FFFFFF"  # Default white background
     },
     "app": {
-        "show_success_stats": True
+        "show_success_stats": True,
+        "always_on_top": False
     }
 }
 
@@ -98,7 +99,8 @@ def save_config(config):
     try:
         with open(config_path, 'w') as f:
             json.dump(config, f, indent=4)
-            logger.info(f"Configuration saved to {config_path}")
+            # Use DEBUG level here to avoid cluttering stdout with frequent config saves
+            logger.debug(f"Configuration saved to {config_path}")
         return True
     except Exception as e:
         logger.error(f"Error saving configuration: {str(e)}")
@@ -373,6 +375,23 @@ def set_output_location(location):
         location = None
     return set_value('app.output_location', location)
 
+# Always-on-top setting (persisted)
+def get_always_on_top():
+    """Return whether main window should stay on top of other windows"""
+    return get_value('app.always_on_top', False)
+
+
+def set_always_on_top(enabled):
+    """Set whether the main window should stay on top and persist the value"""
+    enabled_bool = bool(enabled)
+    current = get_always_on_top()
+    if current == enabled_bool:
+        logger.debug(f"Always-on-top setting unchanged (already {'enabled' if enabled_bool else 'disabled'})")
+        return True
+    result = set_value('app.always_on_top', enabled_bool)
+    logger.debug(f"Always-on-top {'enabled' if enabled_bool else 'disabled'} (saved: {result})")
+    return result
+
 def get_levels_black_point():
     """Get the black point for levels adjustment"""
     return get_value('image_processing.levels_adjustment.default.black_point', 20)
@@ -396,3 +415,4 @@ def get_levels_white_point():
 def set_levels_white_point(value):
     """Set the white point for levels adjustment"""
     return set_value('image_processing.levels_adjustment.default.white_point', int(value))
+

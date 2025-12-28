@@ -182,3 +182,4 @@ tools/
 
 processing_state.db
 sessions.db
+temp/
