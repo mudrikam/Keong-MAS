@@ -45,14 +45,20 @@ class RemBgWorker(QObject):
         self.processed_files_count = 0
         self.temp_files_to_cleanup = []  # Track temporary PNG files for cleanup
         
-        # Ensure CUDA DLL paths are available in worker thread
-        cuda_bin = r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8\bin"
-        cudnn_bin = r"C:\Program Files\NVIDIA\CUDNN\v9.5\bin\12.6"
-        if hasattr(os, 'add_dll_directory'):
-            if os.path.isdir(cuda_bin):
-                os.add_dll_directory(cuda_bin)
-            if os.path.isdir(cudnn_bin):
-                os.add_dll_directory(cudnn_bin)
+        # Ensure CUDA/cuDNN paths are available for this worker thread using the shared helper
+        try:
+            from APP.helpers.gpu_fix import ensure_cuda_accessible, get_gpu_names
+            res = ensure_cuda_accessible()
+            try:
+                gpu_list = get_gpu_names()
+            except Exception:
+                gpu_list = []
+            if res.get('ok'):
+                print(f"GPU environment check passed (providers detected). GPUs: {', '.join(gpu_list) if gpu_list else 'Unknown'}")
+            else:
+                print(f"GPU environment check did not confirm usable GPU. Messages: {res.get('messages', [])[:2]}; GPUs: {', '.join(gpu_list) if gpu_list else 'None'}")
+        except Exception as e:
+            print(f"Warning: failed to run ensure_cuda_accessible in worker init: {e}")
 
     def _get_providers(self):
         """Get providers list based on available ONNX Runtime providers.
@@ -266,25 +272,65 @@ class RemBgWorker(QObject):
                     # Use a local variable inside this nested function to avoid UnboundLocalError
                     selected_model_name = model_name
                     
-                    # Check if CUDA is available by trying to load cuDNN
+                    # Check if CUDA/other GPU providers are available and report details
                     gpu_available = False
+                    providers = []
                     try:
                         providers = self._get_providers()
-                        if providers:  # If _get_providers returns CUDA providers
-                            # Try to create a test session with CUDA
-                            import rembg
-                            test_session = rembg.new_session('isnet-general-use', providers=providers)
-                            gpu_available = True
-                            print("GPU (CUDA) tersedia dan berfungsi, akan menggunakan GPU untuk inference")
+                        try:
+                            from APP.helpers.gpu_fix import get_gpu_names
+                            gpu_names = get_gpu_names()
+                        except Exception:
+                            gpu_names = []
+
+                        if providers:
+                            try:
+                                import rembg
+                                test_session = rembg.new_session('isnet-general-use', providers=providers)
+
+                                # Inspect providers from the test session safely (different rembg versions expose providers differently)
+                                session_provs = None
+                                if hasattr(test_session, 'get_providers'):
+                                    try:
+                                        session_provs = test_session.get_providers()
+                                    except Exception:
+                                        session_provs = None
+                                elif hasattr(test_session, '_sess') and hasattr(test_session._sess, 'get_providers'):
+                                    try:
+                                        session_provs = test_session._sess.get_providers()
+                                    except Exception:
+                                        session_provs = None
+                                elif hasattr(test_session, 'session') and hasattr(test_session.session, 'get_providers'):
+                                    try:
+                                        session_provs = test_session.session.get_providers()
+                                    except Exception:
+                                        session_provs = None
+                                else:
+                                    try:
+                                        print(f"Test session object: {type(test_session)}, some attrs: {sorted([a for a in dir(test_session) if not a.startswith('__')])[:12]}")
+                                    except Exception:
+                                        pass
+
+                                print(f"GPU terdeteksi: {', '.join(gpu_names) if gpu_names else 'Tidak diketahui'}; ONNX providers: {providers}; test session providers: {session_provs if session_provs is not None else 'unknown'}. Akan mencoba menggunakan {providers[0]} untuk inference.")
+
+                                # Consider CUDA available only if the session actually reports using CUDA
+                                if session_provs and 'CUDAExecutionProvider' in session_provs:
+                                    gpu_available = True
+                                else:
+                                    gpu_available = False
+
+                            except Exception as e:
+                                print(f"Provider ONNX {providers} terdeteksi tetapi pembuatan sesi uji gagal: {type(e).__name__}: {e}. Akan fallback ke CPU.")
+                                gpu_available = False
                         else:
-                            print("GPU tidak tersedia, akan menggunakan CPU")
+                            print(f"Tidak ditemukan provider ONNX GPU. GPU sistem: {', '.join(gpu_names) if gpu_names else 'Tidak ada'}. Menggunakan CPU.")
                     except Exception as e:
-                        print(f"GPU (CUDA) gagal digunakan: {str(e)}, akan menggunakan CPU")
+                        print(f"Pemeriksaan GPU gagal: {e}. Menggunakan CPU.")
                     
                     try:
                         # First try creating session by model name (preferred)
-                        print(f"Mencoba membuat session dengan model name: {selected_model_name}...")
                         providers = self._get_providers()
+                        print(f"Mencoba membuat session dengan model name: {selected_model_name} (providers={providers})...")
                         session = rembg.new_session(selected_model_name, providers=providers) if providers else rembg.new_session(selected_model_name)
                     except Exception as e_name:
                         print(f"Session by name failed for {selected_model_name}: {str(e_name)}")
@@ -347,7 +393,114 @@ class RemBgWorker(QObject):
                             except Exception:
                                 pass
 
-                    # If we reach here, session was created successfully
+                    # If we reach here, session was created successfully — inspect which provider(s) are actually used
+                    session_provs = None
+                    try:
+                        # Try several attribute paths to query providers to support different rembg/ort versions
+                        if hasattr(session, 'get_providers'):
+                            try:
+                                session_provs = session.get_providers()
+                            except Exception:
+                                session_provs = None
+                        elif hasattr(session, '_sess') and hasattr(session._sess, 'get_providers'):
+                            try:
+                                session_provs = session._sess.get_providers()
+                            except Exception:
+                                session_provs = None
+                        elif hasattr(session, 'session') and hasattr(session.session, 'get_providers'):
+                            try:
+                                session_provs = session.session.get_providers()
+                            except Exception:
+                                session_provs = None
+                        else:
+                            print(f"Created session object type: {type(session)}, attrs: {sorted([a for a in dir(session) if not a.startswith('__')])[:12]}")
+                    except Exception:
+                        pass
+
+                    print(f"Session dibuat untuk model {selected_model_name}; session providers: {session_provs if session_provs is not None else 'unknown'}")
+
+                    # Decide which provider to use and print a clear success/fallback message
+                    used_provider = None
+                    fallback_reason = None
+                    try:
+                        if session_provs:
+                            # Prioritize common GPU providers
+                            if 'CUDAExecutionProvider' in session_provs:
+                                used_provider = 'CUDAExecutionProvider'
+                            elif 'DmlExecutionProvider' in session_provs:
+                                used_provider = 'DmlExecutionProvider'
+                            elif 'ROCMExecutionProvider' in session_provs:
+                                used_provider = 'ROCMExecutionProvider'
+                            elif 'CPUExecutionProvider' in session_provs:
+                                used_provider = 'CPUExecutionProvider'
+                            else:
+                                # Fall back to the first reported provider if unknown
+                                used_provider = session_provs[0] if isinstance(session_provs, (list, tuple)) and session_provs else 'unknown'
+                        else:
+                            # Session did not expose providers — inspect global onnxruntime providers
+                            try:
+                                import onnxruntime as ort
+                                global_provs = ort.get_available_providers()
+                            except Exception:
+                                global_provs = []
+
+                            # Helper: verify session can perform a tiny inference (runs in background with short timeout)
+                            def _verify_session_inference(sess, timeout=5.0):
+                                import threading
+                                import queue
+                                q = queue.Queue()
+                                def _job():
+                                    try:
+                                        from PIL import Image
+                                        test_img = Image.new('RGB', (8, 8), (0, 0, 0))
+                                        rembg.remove(test_img, only_mask=True, session=sess)
+                                        q.put((True, None))
+                                    except Exception as ex:
+                                        q.put((False, f"{type(ex).__name__}: {ex}"))
+                                th = threading.Thread(target=_job, daemon=True)
+                                th.start()
+                                th.join(timeout)
+                                if not q.empty():
+                                    return q.get()
+                                return False, f"timeout after {timeout}s"
+
+                            # If CUDA exists globally, attempt an automatic verification test before falling back
+                            try:
+                                if global_provs and 'CUDAExecutionProvider' in global_provs:
+                                    ok, info = _verify_session_inference(session)
+                                    if ok:
+                                        used_provider = 'CUDAExecutionProvider'
+                                        fallback_reason = None
+                                        print(f"AUTO GPU VERIFY: small inference succeeded — selecting CUDAExecutionProvider (info={info})")
+                                    else:
+                                        used_provider = 'CPUExecutionProvider'
+                                        fallback_reason = f"AUTO GPU VERIFY failed: {info} — falling back to CPU"
+                                        print(f"AUTO GPU VERIFY: failed ({info}); falling back to CPU")
+                                else:
+                                    used_provider = 'CPUExecutionProvider'
+                                    fallback_reason = 'No CUDA provider reported by runtime'
+                            except Exception as e:
+                                used_provider = 'CPUExecutionProvider'
+                                fallback_reason = f'AUTO GPU VERIFY infrastructure failure: {type(e).__name__}: {e} — falling back to CPU'
+                                print(f'AUTO GPU VERIFY infrastructure error: {type(e).__name__}: {e}; falling back to CPU')
+
+                        # Clear, explicit logging
+                        if used_provider and used_provider != 'CPUExecutionProvider':
+                            print(f"PROVIDER SELECTED: {used_provider} — SUCCESS: using GPU for inference.")
+                        else:
+                            msg = f"PROVIDER SELECTED: CPUExecutionProvider — FALLBACK TO CPU"
+                            if fallback_reason:
+                                msg += f": {fallback_reason}"
+                            print(msg)
+
+                        # Emit a UI-friendly short status update
+                        try:
+                            self.status_update.emit(f"Provider in use: {used_provider}")
+                        except Exception:
+                            pass
+
+                    except Exception as e:
+                        print(f"Error while determining provider: {type(e).__name__}: {e}")
 
                     self.progress.emit(30, f"Memproses: Menghapus latar belakang...", image_path)
                     print(f"Menghapus latar belakang gambar dengan model: {selected_model_name}...")

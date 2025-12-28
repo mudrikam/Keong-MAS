@@ -6,7 +6,20 @@ from typing import Dict, Any
 
 # Predictable paths based on standard NVIDIA installer locations
 CUDA_BIN = r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8\bin"
-CUDNN_BIN = r"C:\Program Files\NVIDIA\CUDNN\v9.5\bin\12.6"
+# cuDNN is normally placed in the 'bin' directory; previous value included an extra subfolder ('12.6') which may be incorrect.
+CUDNN_BIN = r"C:\Program Files\NVIDIA\CUDNN\v9.5\bin"
+
+
+def _ensure_path_entry(path: str) -> bool:
+    """Ensure the path is present in the process PATH (idempotent).
+
+    Returns True if PATH was modified.
+    """
+    p = os.environ.get('PATH', '')
+    if path in p:
+        return False
+    os.environ['PATH'] = path + os.pathsep + p
+    return True
 
 def is_cuda_available():
     """Check if CUDA with cuDNN is available at predictable locations."""
@@ -142,37 +155,38 @@ def ensure_cuda_accessible() -> Dict[str, Any]:
     """
     result: Dict[str, Any] = {'ok': False, 'changed': False, 'messages': [], 'error': None}
     try:
-        # Add CUDA bin to DLL search path
-        if os.path.isdir(CUDA_BIN):
+        # Force-ensure CUDA bin on DLL search path and PATH so the process has a chance to find required DLLs
+        try:
             added_cuda = _add_dll_directory(CUDA_BIN)
-            result['messages'].append(f'Added CUDA bin to DLL search path: {added_cuda}')
-            if added_cuda:
+            # _add_dll_directory returns False if it fell back to PATH or failed; ensure PATH contains it explicitly
+            path_added = _ensure_path_entry(CUDA_BIN) if not added_cuda else False
+            if added_cuda or path_added:
                 result['changed'] = True
-            # Set CUDA environment variables
-            os.environ['CUDA_PATH'] = CUDA_BIN
+            result['messages'].append(f'Ensured CUDA bin on DLL search path / PATH: add_dll={added_cuda}, path_added={path_added}')
+            os.environ.setdefault('CUDA_PATH', CUDA_BIN)
             result['messages'].append(f'Set CUDA_PATH to {CUDA_BIN}')
-        else:
-            result['messages'].append('CUDA bin not found - using CPU')
+        except Exception as e:
+            result['messages'].append(f'Failed to ensure CUDA bin: {e}')
 
-        # Add cuDNN bin to DLL search path
-        if os.path.isdir(CUDNN_BIN):
+        # Force-ensure cuDNN bin on DLL search path and PATH
+        try:
             added_cudnn = _add_dll_directory(CUDNN_BIN)
-            result['messages'].append(f'Added cuDNN bin to DLL search path: {added_cudnn}')
-            if added_cudnn:
+            cudnn_path_added = _ensure_path_entry(CUDNN_BIN) if not added_cudnn else False
+            if added_cudnn or cudnn_path_added:
                 result['changed'] = True
-            # Set cuDNN environment variables
-            os.environ['CUDNN_PATH'] = CUDNN_BIN
+            result['messages'].append(f'Ensured cuDNN bin on DLL search path / PATH: add_dll={added_cudnn}, path_added={cudnn_path_added}')
+            os.environ.setdefault('CUDNN_PATH', CUDNN_BIN)
             result['messages'].append(f'Set CUDNN_PATH to {CUDNN_BIN}')
-        else:
-            result['messages'].append('cuDNN bin not found - using CPU')
+        except Exception as e:
+            result['messages'].append(f'Failed to ensure cuDNN bin: {e}')
 
-        # Try to create rembg CUDA session only if both CUDA and cuDNN are available
-        if os.path.isdir(CUDA_BIN) and os.path.isdir(CUDNN_BIN):
-            ok, info = _try_create_rembg_cuda_session()
-            result['ok'] = ok
-            result['messages'].append(f'CUDA session check: ok={ok}, info={info}')
-        else:
-            result['messages'].append('CUDA/cuDNN not fully installed - using CPU')
+        # Attempt to create a rembg session regardless of whether the predicted directories physically exist.
+        # This lets us detect provider availability even if the DLLs are found via other mechanisms or the PATH we just added.
+        ok, info = _try_create_rembg_cuda_session()
+        result['ok'] = ok
+        result['messages'].append(f'CUDA session check: ok={ok}, info={info}')
+        if not os.path.isdir(CUDA_BIN) or not os.path.isdir(CUDNN_BIN):
+            result['messages'].append('Note: one or both predicted CUDA/cuDNN directories do not exist on disk; we forced them into the process PATH to help discovery.')
 
     except Exception as e:
         result['error'] = traceback.format_exc()
