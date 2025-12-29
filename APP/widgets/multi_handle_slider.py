@@ -18,13 +18,10 @@ class MultiHandleSlider(QWidget):
         self._mid = int(mid)
         self._white = int(white)
         self.setMinimumHeight(28)
-        self._active = None  # 'black' | 'mid' | 'white' | None
+        self._active = None
         self._margin = 8
         self.setMouseTracking(True)
-        # Track whether mid was adjusted manually by user
         self._mid_manual = False
-        # When mid is manually adjusted we store its relative ratio within [black, white]
-        # so that subsequent moves of outer handles preserve that relative position.
         self._mid_ratio = None
         self._drag_start_vals = None
 
@@ -51,17 +48,14 @@ class MultiHandleSlider(QWidget):
         self.update()
 
     def setValues(self, black, mid, white, emit=True):
-        # ensure proper ints and clamped order
         b = int(max(self._min, min(self._max, black)))
         m = int(max(self._min, min(self._max, mid)))
         w = int(max(self._min, min(self._max, white)))
-        # enforce order b <= m <= w
         if m < b:
             m = b
         if w < m:
             w = m
         self._black, self._mid, self._white = b, m, w
-        # if mid is manual, ensure stored ratio matches current positions
         if self._mid_manual:
             denom = self._white - self._black
             if denom > 0:
@@ -85,7 +79,6 @@ class MultiHandleSlider(QWidget):
         left = self._margin
         right = w - self._margin
 
-        # draw track background as gradient based on handle positions
         painter.setPen(Qt.NoPen)
         span = float(self._max - self._min) if (self._max - self._min) != 0 else 1.0
         pos_b = (self._black - self._min) / span
@@ -97,15 +90,12 @@ class MultiHandleSlider(QWidget):
         grad.setColorAt(pos_w, QColor(255, 255, 255))
         painter.setBrush(QBrush(grad))
         painter.drawRect(left, track_y - track_h // 2, right - left, track_h)
-        # subtle border for contrast
         painter.setPen(QPen(QColor(30, 30, 30)))
         painter.setBrush(Qt.NoBrush)
         painter.drawRect(left, track_y - track_h // 2, right - left, track_h)
 
-        # draw handles as small triangles/rects
         for val, color in ((self._black, QColor(0, 0, 0)), (self._mid, QColor(180, 180, 180)), (self._white, QColor(255, 255, 255))):
             x = self._value_to_x(val)
-            # small vertical bar
             painter.setPen(QPen(QColor(30, 30, 30)))
             painter.setBrush(QBrush(color))
             rect = QRectF(x - 4, track_y - 10, 8, 20)
@@ -135,7 +125,6 @@ class MultiHandleSlider(QWidget):
 
     def mousePressEvent(self, event: QMouseEvent):
         x = event.position().x() if hasattr(event, 'position') else event.x()
-        # choose nearest handle
         dist_b = abs(self._value_to_x(self._black) - x)
         dist_m = abs(self._value_to_x(self._mid) - x)
         dist_w = abs(self._value_to_x(self._white) - x)
@@ -144,11 +133,9 @@ class MultiHandleSlider(QWidget):
             self._active = 'black'
         elif dmin == dist_m:
             self._active = 'mid'
-            # user is starting to drag mid -> mark as manual and compute current ratio
             self.set_mid_manual(True)
         else:
             self._active = 'white'
-        # remember starting values to compute deltas for relative movement
         self._drag_start_vals = (self._black, self._mid, self._white)
         self._mouse_move_to(x)
         event.accept()
@@ -173,40 +160,32 @@ class MultiHandleSlider(QWidget):
 
     def _mouse_move_to(self, x):
         val = self._x_to_value(x)
-        # Store previous values to compute deltas
         old_b, old_m, old_w = self._black, self._mid, self._white
 
         if self._active == 'black':
-            # Move black
             proposed_b = max(self._min, min(self._max, min(val, self._mid)))
             self._black = proposed_b
             if not self._mid_manual or self._mid_ratio is None:
-                # Auto center mid between black and white
                 self._mid = int((self._black + self._white) / 2)
             else:
-                # Preserve stored mid ratio relative to the new [black, white] range
                 ratio = self._mid_ratio
                 if ratio is None:
                     ratio = 0.5
                 self._mid = int(round(max(self._black, min(self._white,
                                                           self._black + ratio * (self._white - self._black)))))
         elif self._active == 'mid':
-            # Move mid within [black, white] and mark as manual; store ratio
             m = max(self._black, min(val, self._white))
             self._mid = max(self._min, min(m, self._max))
             self._mid_manual = True
-            # compute and store current relative ratio of mid in [black, white]
             denom = self._white - self._black
             if denom > 0:
                 self._mid_ratio = (self._mid - self._black) / float(denom)
             else:
                 self._mid_ratio = 0.5
         elif self._active == 'white':
-            # Move white
             proposed_w = max(self._min, min(self._max, max(val, self._mid)))
             self._white = proposed_w
             if not self._mid_manual or self._mid_ratio is None:
-                # Auto center mid between black and white
                 self._mid = int((self._black + self._white) / 2)
             else:
                 ratio = self._mid_ratio
@@ -214,7 +193,6 @@ class MultiHandleSlider(QWidget):
                     ratio = 0.5
                 self._mid = int(round(max(self._black, min(self._white,
                                                           self._black + ratio * (self._white - self._black)))))
-        # Ensure ordering and bounds again as safety
         if self._mid < self._black:
             self._mid = self._black
         if self._mid > self._white:
@@ -228,7 +206,6 @@ class MultiHandleSlider(QWidget):
 
 
 if __name__ == '__main__':
-    # quick self-test
     from PySide6.QtWidgets import QApplication, QVBoxLayout, QLabel
     import sys
 
