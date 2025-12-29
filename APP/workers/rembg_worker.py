@@ -161,13 +161,14 @@ class RemBgWorker(QObject):
         try:
             # Convert and save as PNG
             with Image.open(image_path) as img:
+                # Do NOT apply EXIF transpose here: we want to preserve raw pixel orientation
                 # Convert to RGB if necessary (remove alpha channel for non-PNG formats)
                 if img.mode in ('RGBA', 'LA', 'P'):
                     # For formats that might have transparency, convert to RGB
                     # This is safe because rembg will add transparency back
                     img = img.convert('RGB')
                 
-                # Save as PNG with high quality
+                # Save as PNG with high quality (PNG will not carry EXIF orientation tags)
                 img.save(temp_png_path, 'PNG', optimize=False)
             
             # Track for cleanup
@@ -216,7 +217,13 @@ class RemBgWorker(QObject):
             
             self.progress.emit(20, f"Memuat gambar: {os.path.basename(image_path)}", image_path)
             
-            input_img = Image.open(processing_path)
+            # Open image for processing (preserve raw pixel orientation)
+            try:
+                with Image.open(processing_path) as _img:
+                    input_img = _img.copy()
+            except Exception as e:
+                raise Exception(f"Gagal memuat gambar untuk diproses: {str(e)}")
+
             output_path, mask_path = self._process_with_rembg(input_img, base_output_dir, file_name, model_name, image_path)
             
             if not output_path:
