@@ -1,9 +1,6 @@
-[![License](https://img.shields.io/github/license/mudrikam/Keong-MAS)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
-[![Code Size](https://img.shields.io/github/languages/code-size/mudrikam/Keong-MAS)](https://github.com/mudrikam/Keong-MAS)
-[![Release](https://img.shields.io/github/v/release/mudrikam/Keong-MAS?include_prereleases)](https://github.com/mudrikam/Keong-MAS/releases)
-[![Downloads](https://img.shields.io/github/downloads/mudrikam/Keong-MAS/total)](https://github.com/mudrikam/Keong-MAS/releases)
-[![Last Commit](https://img.shields.io/github/last-commit/mudrikam/Keong-MAS)](https://github.com/mudrikam/Keong-MAS/commits/main)
+[![Downloads](https://img.shields.io/github/downloads/mudrikam/Keong-MAS/total?style=for-the-badge&logo=github)](https://github.com/mudrikam/Keong-MAS/releases)
+[![Release](https://img.shields.io/github/v/release/mudrikam/Keong-MAS?style=for-the-badge&logo=github)](https://github.com/mudrikam/Keong-MAS/releases)
+![WhatsApp Group](https://img.shields.io/badge/Join%20WhatsApp-Group-25D366?logo=whatsapp&style=for-the-badge&link=https://chat.whatsapp.com/CMQvDxpCfP647kBBA6dRn3)
 
 # Keong MAS
 
