@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 import qtawesome as qta
 
 from APP.ui import create_main_ui
-from APP.widgets import ScalableImageLabel, FileTableWidget, ImagePreviewWidget
+from APP.widgets import ScalableImageLabel, FileTableWidget, ImagePreviewWidget, ImportDialog
 from APP.workers import RemBgWorker
 from APP.helpers.database import DatabaseManager
 from APP.helpers.config_manager import (
@@ -1816,8 +1816,15 @@ class MainWindow(QMainWindow):
         )
         
         if folder_path:
-            self._reset_ui_state()
-            self._process_files([folder_path])
+            # Use the threaded ImportDialog to scan and validate the selected folder
+            try:
+                dlg = ImportDialog(self, paths=[folder_path])
+                selected_files = dlg.exec_get_files()
+                if selected_files:
+                    self._process_files(selected_files)
+            except Exception as e:
+                print(f"Error during folder import: {e}")
+            # Do not process the raw folder path directly; rely on ImportDialog confirmation to start processing
     
     def _open_files_dialog(self):
         """Handle open files button click."""
@@ -1829,8 +1836,16 @@ class MainWindow(QMainWindow):
         )
         
         if file_paths:
-            self._reset_ui_state()
-            self._process_files(file_paths)
+            # Use the threaded ImportDialog to scan and validate the selected files
+            try:
+                dlg = ImportDialog(self, paths=file_paths)
+                selected_files = dlg.exec_get_files()
+                if selected_files:
+                    # User confirmed; start processing only after import completes
+                    self._process_files(selected_files)
+            except Exception as e:
+                print(f"Error during file import: {e}")
+            # Do not process the raw selection directly; rely on ImportDialog confirmation to start processing
     
     def _on_stop_clicked(self):
         """Handle stop button click."""
@@ -2201,9 +2216,22 @@ class MainWindow(QMainWindow):
             self.drop_area.style().polish(self.drop_area)
             
             file_paths = [url.toLocalFile() for url in event.mimeData().urls()]
-            
-            self._reset_ui_state()
-            self._process_files(file_paths)
+
+            # Use ImportDialog to validate and confirm files before processing
+            try:
+                dlg = ImportDialog(self, paths=file_paths)
+                selected_files = dlg.exec_get_files()
+                if selected_files:
+                    self._reset_ui_state()
+                    self._process_files(selected_files)
+                else:
+                    print("Drop import cancelled or no supported files found")
+            except Exception as e:
+                print(f"Error during drop import: {e}")
+                try:
+                    QMessageBox.warning(self, "Import Error", f"Gagal mengimpor file: {e}")
+                except Exception:
+                    pass
         else:
             event.ignore()
     

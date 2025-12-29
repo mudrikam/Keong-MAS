@@ -506,15 +506,84 @@ class RemBgWorker(QObject):
                     print(f"Menghapus latar belakang gambar dengan model: {selected_model_name}...")
                     input_size = input_img.size
                     
+                    # Analyze image for optimal alpha matting parameters
+                    from APP.helpers.image_utils import recommend_alpha_matting_params
+                    alpha_params = recommend_alpha_matting_params(input_img)
+                    
                     self.progress.emit(40, f"Memproses: Menerapkan alpha matting...", image_path)
-                    output_img = rembg.remove(
-                        input_img,
-                        alpha_matting=True,
-                        alpha_matting_foreground_threshold=240,
-                        alpha_matting_background_threshold=10,
-                        alpha_matting_erode_size=10,
-                        session=session
-                    )
+                    
+                    # Try alpha matting with progressive parameter adjustment
+                    alpha_matting_success = False
+                    output_img = None
+                    
+                    # Define progressive parameter attempts
+                    attempts = [
+                        # Start with recommended parameters
+                        {
+                            "alpha_matting_foreground_threshold": alpha_params["alpha_matting_foreground_threshold"],
+                            "alpha_matting_background_threshold": alpha_params["alpha_matting_background_threshold"],
+                            "alpha_matting_erode_size": alpha_params["alpha_matting_erode_size"],
+                            "alpha_matting_discard_threshold": alpha_params.get("alpha_matting_discard_threshold", 1e-4),
+                            "alpha_matting_shift": alpha_params.get("alpha_matting_shift", 0.01)
+                        },
+                        # Increase shift slightly
+                        {
+                            "alpha_matting_foreground_threshold": alpha_params["alpha_matting_foreground_threshold"],
+                            "alpha_matting_background_threshold": alpha_params["alpha_matting_background_threshold"],
+                            "alpha_matting_erode_size": alpha_params["alpha_matting_erode_size"],
+                            "alpha_matting_discard_threshold": 1e-4,
+                            "alpha_matting_shift": 0.02
+                        },
+                        # Increase shift more
+                        {
+                            "alpha_matting_foreground_threshold": alpha_params["alpha_matting_foreground_threshold"],
+                            "alpha_matting_background_threshold": alpha_params["alpha_matting_background_threshold"],
+                            "alpha_matting_erode_size": alpha_params["alpha_matting_erode_size"],
+                            "alpha_matting_discard_threshold": 1e-4,
+                            "alpha_matting_shift": 0.05
+                        },
+                        # Decrease discard_threshold
+                        {
+                            "alpha_matting_foreground_threshold": alpha_params["alpha_matting_foreground_threshold"],
+                            "alpha_matting_background_threshold": alpha_params["alpha_matting_background_threshold"],
+                            "alpha_matting_erode_size": alpha_params["alpha_matting_erode_size"],
+                            "alpha_matting_discard_threshold": 1e-5,
+                            "alpha_matting_shift": 0.01
+                        },
+                        # More aggressive: lower discard_threshold and higher shift
+                        {
+                            "alpha_matting_foreground_threshold": alpha_params["alpha_matting_foreground_threshold"],
+                            "alpha_matting_background_threshold": alpha_params["alpha_matting_background_threshold"],
+                            "alpha_matting_erode_size": alpha_params["alpha_matting_erode_size"],
+                            "alpha_matting_discard_threshold": 1e-6,
+                            "alpha_matting_shift": 0.1
+                        }
+                    ]
+                    
+                    for attempt_idx, params in enumerate(attempts):
+                        try:
+                            print(f"Mencoba alpha matting attempt {attempt_idx + 1}: discard_threshold={params['alpha_matting_discard_threshold']}, shift={params['alpha_matting_shift']}")
+                            output_img = rembg.remove(
+                                input_img,
+                                alpha_matting=True,
+                                alpha_matting_foreground_threshold=params["alpha_matting_foreground_threshold"],
+                                alpha_matting_background_threshold=params["alpha_matting_background_threshold"],
+                                alpha_matting_erode_size=params["alpha_matting_erode_size"],
+                                alpha_matting_discard_threshold=params["alpha_matting_discard_threshold"],
+                                alpha_matting_shift=params["alpha_matting_shift"],
+                                session=session
+                            )
+                            alpha_matting_success = True
+                            print(f"Alpha matting berhasil pada attempt {attempt_idx + 1}")
+                            break
+                        except Exception as attempt_error:
+                            print(f"Attempt {attempt_idx + 1} gagal: {str(attempt_error)}")
+                            continue
+                    
+                    if not alpha_matting_success:
+                        print("Semua attempt alpha matting gagal, melanjutkan tanpa alpha matting untuk hasil, tapi tetap dapatkan mask.")
+                        # Last resort: disable alpha matting but still get mask
+                        output_img = rembg.remove(input_img, session=session)  # No alpha matting
                     
                     output_size = output_img.size
                     print(f"Ukuran input: {input_size[0]}x{input_size[1]}, ukuran output: {output_size[0]}x{output_size[1]}")
@@ -525,6 +594,7 @@ class RemBgWorker(QObject):
                     
                     output_img.save(output_path)
                     
+                    # Always get mask separately as required
                     output_mask = rembg.remove(input_img, only_mask=True, session=session)
                     
                     if output_mask.size != input_size:
