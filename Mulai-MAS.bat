@@ -1,3 +1,36 @@
+::[Bat To Exe Converter]
+::
+::YAwzoRdxOk+EWAjk
+::fBw5plQjdDWDJHuR/U40FDBRQwqFcUabNYk92NjH/e+UnmYYW+w4NaL66fqHI+9z
+::YAwzuBVtJxjWCl3EqQJgSA==
+::ZR4luwNxJguZRRnk
+::Yhs/ulQjdF+5
+::cxAkpRVqdFKZSDk=
+::cBs/ulQjdF+5
+::ZR41oxFsdFKZSDk=
+::eBoioBt6dFKZSDk=
+::cRo6pxp7LAbNWATEpCI=
+::egkzugNsPRvcWATEpCI=
+::dAsiuh18IRvcCxnZtBJQ
+::cRYluBh/LU+EWAnk
+::YxY4rhs+aU+IeA==
+::cxY6rQJ7JhzQF1fEqQJhZksaHErSXA==
+::ZQ05rAF9IBncCkqN+0xwdVsFAlTMbCXqZg==
+::ZQ05rAF9IAHYFVzEqQIbLRRaS0SuPX60Bb0Z+og=
+::eg0/rx1wNQPfEVWB+kM9LVsJDC+HM2W9Rpkd/eb45++Vwg==
+::fBEirQZwNQPfEVWB+kM9LVsJDCiDKWW5DrAOiA==
+::cRolqwZ3JBvQF1fEqQIULQhVRQqLPSuJEqAY4eeb
+::dhA7uBVwLU+EWH2B50M5JhJVDDeWKW+zCdU=
+::YQ03rBFzNR3SWATE30c/JhwUYSWxXA==
+::dhAmsQZ3MwfNWATE0EcjKRJaRQXCD3+vArwTiA==
+::ZQ0/vhVqMQ3MEVWAtB9wSA==
+::Zg8zqx1/OA3MEVWAtB9wSA==
+::dhA7pRFwIByZRRnk
+::Zh4grVQjdDWDJHuR/U40FDBRQwqFcUabNYk37ef16Kqqg35TUfo6GA==
+::YB416Ek+ZG8=
+::
+::
+::978f952a14a936cc963da21a135fa983
 @echo off
 setlocal enabledelayedexpansion
 
@@ -45,6 +78,7 @@ set "BASE_DIR=%~dp0"
 set "BASE_DIR=%BASE_DIR:~0,-1%"
 set "PYTHON_DIR=%BASE_DIR%\python\Windows"
 set "PYTHON_EXE=%PYTHON_DIR%\python.exe"
+set "PYTHONW=%PYTHON_DIR%\pythonw.exe"
 set "MAIN_PY=%BASE_DIR%\main.py"
 
 REM =====================================================================
@@ -66,8 +100,12 @@ if exist "%PYTHON_DIR%" (
     ) else (
         echo Warning: requirements.txt not found. Skipping package installation.
     )
-    "%PYTHON_EXE%" "%MAIN_PY%"
-    goto :eof
+    if exist "%PYTHONW%" (
+        start "" "%PYTHONW%" "%MAIN_PY%"
+    ) else (
+        start "" "%PYTHON_EXE%" "%MAIN_PY%"
+    )
+    exit /b 0
 )
 
 echo Python installation not found. Setting up environment...
@@ -138,6 +176,11 @@ REM =====================================================================
 REM Launch the application
 REM =====================================================================
 echo Setup complete. Running main.py...
-"%PYTHON_EXE%" "%MAIN_PY%"
+if exist "%PYTHONW%" (
+    start "" "%PYTHONW%" "%MAIN_PY%"
+) else (
+    start "" "%PYTHON_EXE%" "%MAIN_PY%"
+)
 
+exit /b 0
 endlocal
