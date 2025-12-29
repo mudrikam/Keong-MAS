@@ -122,7 +122,7 @@ class ImportDialog(QDialog):
         self.btn_confirm = QPushButton("Mulai Proses")
         self.btn_confirm.setEnabled(False)
         try:
-            self.btn_confirm.setIcon(qta.icon('fa5s.play', color='green'))
+            self.btn_confirm.setIcon(qta.icon('fa5s.play'))
         except Exception:
             pass
 

@@ -1,6 +1,6 @@
 from PySide6.QtCore import Qt, Signal, QRectF, QPoint
 from PySide6.QtWidgets import QWidget
-from PySide6.QtGui import QPainter, QColor, QBrush, QPen, QMouseEvent
+from PySide6.QtGui import QPainter, QColor, QBrush, QPen, QMouseEvent, QLinearGradient
 
 
 class MultiHandleSlider(QWidget):
@@ -85,9 +85,21 @@ class MultiHandleSlider(QWidget):
         left = self._margin
         right = w - self._margin
 
-        # draw track background
+        # draw track background as gradient based on handle positions
         painter.setPen(Qt.NoPen)
-        painter.setBrush(QBrush(QColor(70, 70, 70)))
+        span = float(self._max - self._min) if (self._max - self._min) != 0 else 1.0
+        pos_b = (self._black - self._min) / span
+        pos_m = (self._mid - self._min) / span
+        pos_w = (self._white - self._min) / span
+        grad = QLinearGradient(left, track_y, right, track_y)
+        grad.setColorAt(pos_b, QColor(0, 0, 0))
+        grad.setColorAt(pos_m, QColor(180, 180, 180))
+        grad.setColorAt(pos_w, QColor(255, 255, 255))
+        painter.setBrush(QBrush(grad))
+        painter.drawRect(left, track_y - track_h // 2, right - left, track_h)
+        # subtle border for contrast
+        painter.setPen(QPen(QColor(30, 30, 30)))
+        painter.setBrush(Qt.NoBrush)
         painter.drawRect(left, track_y - track_h // 2, right - left, track_h)
 
         # draw handles as small triangles/rects

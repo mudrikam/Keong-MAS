@@ -43,7 +43,7 @@ class ImagePreviewWidget(QWidget):
             self._nav_frame.setObjectName('previewNav')
             self._nav_frame.setStyleSheet('''
                 QFrame#previewNav {
-                    background-color: rgba(30, 30, 30, 180);
+                    background-color: rgba(128, 128, 128, 0.2);
                     border-radius: 6px;
                 }
                 QPushButton { background: transparent; color: white; border: none; }
