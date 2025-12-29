@@ -252,7 +252,11 @@ class RemBgWorker(QObject):
 
     def _process_with_rembg(self, input_img, output_dir, file_name, model_name, image_path):
         """Process image with rembg to remove background."""
-        import rembg  # Import here to ensure GPU paths are set up first
+        try:
+            import rembg  # Import here to ensure GPU paths are set up first
+        except Exception as e:
+            print(f"Failed to import rembg: {e}")
+            return None, None  # Can't proceed without rembg
         output_path = os.path.join(output_dir, f"{file_name}.png")
         mask_path = os.path.join(output_dir, f"{file_name}_mask.png")
         
@@ -285,7 +289,7 @@ class RemBgWorker(QObject):
 
                         if providers:
                             try:
-                                import rembg
+                                # Use already-imported rembg from outer scope to create a test session
                                 test_session = rembg.new_session('isnet-general-use', providers=providers)
 
                                 # Inspect providers from the test session safely (different rembg versions expose providers differently)
