@@ -231,10 +231,18 @@ class RemBgWorker(QObject):
             
             self.progress.emit(50, f"Menyimpan gambar transparan...", image_path)
             
-            enhanced_path = self._enhance_transparency(output_path, mask_path, file_name, base_output_dir, image_path)
+            # _enhance_transparency returns (enhanced_path, adjusted_mask_path)
+            enhanced_path, adjusted_mask_path = self._enhance_transparency(output_path, mask_path, file_name, base_output_dir, image_path)
             
             if enhanced_path:
-                enhanced_path = self._apply_auto_crop(enhanced_path, file_name, base_output_dir, image_path)
+                print(f"✓ PNG transparan berhasil dibuat: {enhanced_path}")
+                
+                # Auto crop PNG (independen dari JPG export)
+                # Pass adjusted_mask_path so auto crop can use it, then cleanup if needed
+                enhanced_path = self._apply_auto_crop(enhanced_path, adjusted_mask_path, image_path)
+                print(f"✓ Selesai proses auto crop (jika diaktifkan)")
+                
+                # Solid background & JPG export (opsional)
                 self._apply_solid_background(enhanced_path, image_path)
             
             # Emit completion with ORIGINAL input path, not output path
@@ -656,7 +664,11 @@ class RemBgWorker(QObject):
             print(f"Error emitting download progress: {str(e)}")
 
     def _enhance_transparency(self, output_path, mask_path, file_name, output_dir, image_path):
-        """Enhance transparency using levels adjustment."""
+        """Enhance transparency using levels adjustment.
+        
+        Returns:
+            tuple: (enhanced_path, adjusted_mask_path) or (None, None) on error
+        """
         try:
             self.progress.emit(70, f"Menghasilkan gambar transparan yang disempurnakan...", image_path)
             
@@ -672,7 +684,8 @@ class RemBgWorker(QObject):
             self.progress.emit(80, f"Membuat gambar transparan dengan mask yang diatur levels...", image_path)
             print(f"Langkah 2: Membuat gambar transparan dengan mask yang sudah diatur levels-nya...")
             
-            enhanced_path = enhance_transparency_with_levels(
+            # enhance_transparency_with_levels now returns (enhanced_path, adjusted_mask_path)
+            result = enhance_transparency_with_levels(
                 output_path, mask_path,
                 output_suffix="_transparent",
                 black_point=black_point,
@@ -683,58 +696,102 @@ class RemBgWorker(QObject):
                 save_mask=save_mask
             )
             
+            # Handle return value (could be tuple or single value for backwards compatibility)
+            if isinstance(result, tuple):
+                enhanced_path, adjusted_mask_path = result
+            else:
+                # Backwards compatibility: if only path returned
+                enhanced_path = result
+                adjusted_mask_path = None
+            
             if enhanced_path:
                 print(f"Berhasil membuat gambar dengan levels adjustment: {enhanced_path}")
-                
-                if not save_mask:
-                    import re
-                    timestamp_match = re.search(r'_transparent_(\d+)', enhanced_path)
-                    timestamp_suffix = f"_{timestamp_match.group(1)}" if timestamp_match else ""
-                    mask_path_adjusted = os.path.join(output_dir, f"{file_name}_mask_adjusted{timestamp_suffix}.png")
-                    
-                    if os.path.exists(mask_path_adjusted):
-                        try:
-                            os.remove(mask_path_adjusted)
-                            print(f"Removed mask file: {mask_path_adjusted}")
-                        except Exception as e:
-                            print(f"Error removing mask: {str(e)}")
+                print(f"Adjusted mask path: {adjusted_mask_path}")
                 
                 cleanup_original_temp_files(output_path, mask_path)
-                return enhanced_path
+                # Return both paths - mask will be cleaned up later after auto crop (if needed)
+                return enhanced_path, adjusted_mask_path
             
-            return None
+            return None, None
             
         except Exception as e:
             print(f"Error saat membuat gambar transparan: {str(e)}")
-            return None
+            import traceback
+            traceback.print_exc()
+            return None, None
 
-    def _apply_auto_crop(self, enhanced_path, file_name, output_dir, image_path):
-        """Apply auto-cropping if enabled."""
+    def _apply_auto_crop(self, enhanced_path, adjusted_mask_path, image_path):
+        """Apply auto-cropping if enabled. Works on PNG directly, independent of JPG export.
+        
+        Args:
+            enhanced_path (str): Path to the enhanced PNG image
+            adjusted_mask_path (str): Path to the adjusted mask file (required for crop detection)
+            image_path (str): Original image path (for progress updates)
+            
+        Returns:
+            str: Path to the cropped image (or original if crop disabled/failed)
+        """
+        save_mask = get_save_mask_enabled()
+        
         try:
             if not get_auto_crop_enabled():
-                print(f"Auto crop disabled, skipping crop step")
+                print(f"⊘ Auto crop dinonaktifkan, PNG tetap ukuran penuh")
+                # Cleanup mask if not needed
+                if not save_mask and adjusted_mask_path and os.path.exists(adjusted_mask_path):
+                    try:
+                        os.remove(adjusted_mask_path)
+                        print(f"  → Mask dihapus (save_mask=False): {adjusted_mask_path}")
+                    except Exception as e:
+                        print(f"  → Error menghapus mask: {str(e)}")
                 return enhanced_path
             
-            self.progress.emit(90, f"Melakukan auto crop...", image_path)
-            print(f"Auto crop enabled, cropping image...")
+            if not adjusted_mask_path or not os.path.exists(adjusted_mask_path):
+                print(f"⚠ Auto crop aktif tapi mask tidak ditemukan: {adjusted_mask_path}")
+                print(f"  → Tidak bisa auto crop tanpa mask, menggunakan PNG ukuran penuh")
+                return enhanced_path
             
-            mask_to_use = os.path.join(output_dir, f'{file_name}_mask_adjusted.png')
+            self.progress.emit(90, f"Melakukan auto crop PNG...", image_path)
+            print(f"✂ Auto crop diaktifkan, memotong PNG sesuai margin...")
+            print(f"  → Menggunakan mask: {adjusted_mask_path}")
+            
             unified_margin = get_unified_margin()
-            print(f"Using unified margin: {unified_margin}px")
+            print(f"  → Margin: {unified_margin}px")
             
             cropped_path = crop_transparent_image(
                 enhanced_path,
-                mask_to_use,
+                adjusted_mask_path,
                 output_path=None,
                 threshold=unified_margin
             )
             
+            # Cleanup mask after crop (if save_mask=False)
+            if not save_mask and adjusted_mask_path and os.path.exists(adjusted_mask_path):
+                try:
+                    os.remove(adjusted_mask_path)
+                    print(f"  → Mask dihapus setelah crop (save_mask=False): {adjusted_mask_path}")
+                except Exception as e:
+                    print(f"  → Error menghapus mask: {str(e)}")
+            
             if cropped_path:
-                print(f"Auto-cropped image saved at: {cropped_path}")
+                print(f"✓ PNG berhasil di-crop dan disimpan: {cropped_path}")
+                print(f"  → File PNG asli (full size) telah ditimpa dengan versi cropped")
                 return cropped_path
+            else:
+                print(f"⚠ Auto crop gagal, menggunakan PNG ukuran penuh")
                 
         except Exception as e:
-            print(f"Warning: Auto crop error: {str(e)}")
+            print(f"⚠ Warning: Auto crop error: {str(e)}")
+            print(f"  → PNG ukuran penuh tetap tersimpan")
+            import traceback
+            traceback.print_exc()
+            
+            # Cleanup mask on error (if save_mask=False)
+            if not save_mask and adjusted_mask_path and os.path.exists(adjusted_mask_path):
+                try:
+                    os.remove(adjusted_mask_path)
+                    print(f"  → Mask dihapus setelah error (save_mask=False): {adjusted_mask_path}")
+                except Exception:
+                    pass
         
         return enhanced_path
 

@@ -1492,6 +1492,13 @@ class MainWindow(QMainWindow):
         try:
             set_auto_crop_enabled(is_checked)
             print(f"Auto crop setting saved successfully: {is_checked}")
+            
+            # Update status bar untuk feedback langsung
+            if is_checked:
+                self.statusBar().showMessage(f"✓ Potong Otomatis diaktifkan (Margin: {get_unified_margin()}px)", 3000)
+            else:
+                self.statusBar().showMessage("✓ Potong Otomatis dinonaktifkan", 3000)
+                
         except Exception as e:
             print(f"Error saving auto crop setting: {str(e)}")
             QMessageBox.warning(self, "Error", f"Gagal menyimpan pengaturan potong otomatis: {str(e)}")
@@ -1505,6 +1512,13 @@ class MainWindow(QMainWindow):
             set_solid_bg_enabled(is_checked)
             self._update_solid_bg_controls()
             print(f"Solid background setting saved successfully: {is_checked}")
+            
+            # Update status bar untuk feedback langsung
+            if is_checked:
+                self.statusBar().showMessage(f"✓ Background Solid diaktifkan ({get_solid_bg_color()})", 3000)
+            else:
+                self.statusBar().showMessage("✓ Background Solid dinonaktifkan", 3000)
+                
         except Exception as e:
             print(f"Error saving solid background setting: {str(e)}")
             QMessageBox.warning(self, "Error", f"Gagal menyimpan pengaturan background solid: {str(e)}")
@@ -1531,6 +1545,10 @@ class MainWindow(QMainWindow):
         try:
             set_unified_margin(value)
             print(f"Unified margin set to: {value}px")
+            
+            # Update status bar untuk feedback langsung
+            self.statusBar().showMessage(f"✓ Margin diatur ke: {value}px", 2000)
+            
         except Exception as e:
             print(f"Error saving unified margin: {str(e)}")
     
@@ -1542,6 +1560,13 @@ class MainWindow(QMainWindow):
         try:
             set_save_mask_enabled(is_checked)
             print(f"Save mask setting saved successfully: {is_checked}")
+            
+            # Update status bar untuk feedback langsung
+            if is_checked:
+                self.statusBar().showMessage("✓ Simpan Mask diaktifkan", 3000)
+            else:
+                self.statusBar().showMessage("✓ Simpan Mask dinonaktifkan", 3000)
+                
         except Exception as e:
             print(f"Error saving save mask setting: {str(e)}")
             QMessageBox.warning(self, "Error", f"Gagal menyimpan pengaturan mask: {str(e)}")
@@ -1555,6 +1580,13 @@ class MainWindow(QMainWindow):
             set_jpg_export_enabled(is_checked)
             self._update_jpg_quality_controls()
             print(f"JPG export setting saved successfully: {is_checked}")
+            
+            # Update status bar untuk feedback langsung
+            if is_checked:
+                self.statusBar().showMessage(f"✓ Ekspor JPG diaktifkan (Quality: {get_jpg_quality()}%)", 3000)
+            else:
+                self.statusBar().showMessage("✓ Ekspor JPG dinonaktifkan", 3000)
+                
         except Exception as e:
             print(f"Error saving JPG export setting: {str(e)}")
             QMessageBox.warning(self, "Error", f"Gagal menyimpan pengaturan ekspor JPG: {str(e)}")
@@ -1564,6 +1596,10 @@ class MainWindow(QMainWindow):
         try:
             set_jpg_quality(value)
             print(f"JPG quality set to: {value}")
+            
+            # Update status bar untuk feedback langsung
+            self.statusBar().showMessage(f"✓ Kualitas JPG diatur ke: {value}%", 2000)
+            
         except Exception as e:
             print(f"Error saving JPG quality: {str(e)}")
     

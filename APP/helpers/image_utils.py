@@ -463,11 +463,12 @@ def enhance_transparency_with_levels(image_path, mask_path, output_suffix="_tran
         print("Checking if intelligent cleanup should run...")
         intelligent_cleanup_after_image_utils(output_path)
         
-        return output_path
+        # Return both output path and adjusted mask path (for auto crop)
+        return output_path, adjusted_mask_path
         
     except Exception as e:
         print(f"Error enhancing transparency with levels: {str(e)}")
-        return None
+        return None, None
 
 # Add this new function to help understand and handle rembg alpha matting errors
 def explain_alpha_matting_error(error_message):
