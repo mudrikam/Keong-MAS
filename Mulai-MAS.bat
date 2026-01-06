@@ -109,11 +109,11 @@ if exist "%PYTHON_DIR%" (
     
     REM Run application (Python will auto-detect CUDA/cuDNN)
     if exist "%PYTHONW%" (
-        "%PYTHONW%" "%MAIN_PY%"
+        start "" "%PYTHONW%" "%MAIN_PY%"
     ) else (
-        "%PYTHON_EXE%" "%MAIN_PY%"
+        start "" "%PYTHON_EXE%" "%MAIN_PY%"
     )
-    exit /b 0
+    exit
 )
 
 echo Python installation not found. Setting up environment...
@@ -192,10 +192,9 @@ echo Note: CUDA/cuDNN will be auto-detected by Python if available
 
 REM Run application (Python will auto-detect CUDA/cuDNN)
 if exist "%PYTHONW%" (
-    "%PYTHONW%" "%MAIN_PY%"
+    start "" "%PYTHONW%" "%MAIN_PY%"
 ) else (
-    "%PYTHON_EXE%" "%MAIN_PY%"
+    start "" "%PYTHON_EXE%" "%MAIN_PY%"
 )
 
-exit /b 0
-endlocal
+exit
