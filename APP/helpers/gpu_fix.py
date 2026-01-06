@@ -4,11 +4,6 @@ import sys
 import traceback
 from typing import Dict, Any
 
-# Predictable paths based on standard NVIDIA installer locations
-CUDA_BIN = r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8\bin"
-# cuDNN is normally placed in the 'bin' directory; previous value included an extra subfolder ('12.6') which may be incorrect.
-CUDNN_BIN = r"C:\Program Files\NVIDIA\CUDNN\v9.5\bin"
-
 
 def _ensure_path_entry(path: str) -> bool:
     """Ensure the path is present in the process PATH (idempotent).
@@ -21,25 +16,59 @@ def _ensure_path_entry(path: str) -> bool:
     os.environ['PATH'] = path + os.pathsep + p
     return True
 
+def get_cuda_paths():
+    """Get CUDA and cuDNN paths using smart detection.
+    
+    Returns:
+        tuple: (cuda_bin, cudnn_bin) or (None, None) if not found
+    """
+    try:
+        from APP.helpers.cuda_finder import find_cuda_paths, find_cudnn_paths
+        cuda_info = find_cuda_paths()
+        cudnn_info = find_cudnn_paths()
+        
+        cuda_bin = cuda_info['cuda_bin'] if cuda_info['found'] else None
+        cudnn_bin = cudnn_info['cudnn_bin'] if cudnn_info['found'] else None
+        
+        return cuda_bin, cudnn_bin
+    except Exception:
+        # Fallback to None if detection fails
+        return None, None
+
 def is_cuda_available():
-    """Check if CUDA with cuDNN is available at predictable locations."""
-    # First check if CUDA and cuDNN are installed in expected locations
-    cuda_exists = os.path.isdir(CUDA_BIN)
-    cudnn_exists = os.path.isdir(CUDNN_BIN)
+    """Check if CUDA with cuDNN is available using smart detection."""
+    cuda_bin, cudnn_bin = get_cuda_paths()
+    
+    if not cuda_bin or not cudnn_bin:
+        return False
+    
+    # Check if paths actually exist
+    cuda_exists = os.path.isdir(cuda_bin)
+    cudnn_exists = os.path.isdir(cudnn_bin)
     
     if not cuda_exists or not cudnn_exists:
         return False
     
-    # If both exist, try to load cuDNN DLL
-    cudnn_dll = os.path.join(CUDNN_BIN, 'cudnn64_9.dll')
-    if os.path.exists(cudnn_dll):
-        try:
-            import ctypes
-            ctypes.windll.LoadLibrary(cudnn_dll)
-            return True
-        except:
-            pass
-    return False
+    # Try to find and load cuDNN DLL
+    try:
+        # Common cuDNN DLL names
+        cudnn_dll_names = ['cudnn64_9.dll', 'cudnn64_8.dll', 'cudnn_ops_infer64_9.dll', 'cudnn_ops_infer64_8.dll']
+        
+        for dll_name in cudnn_dll_names:
+            cudnn_dll = os.path.join(cudnn_bin, dll_name)
+            if os.path.exists(cudnn_dll):
+                try:
+                    import ctypes
+                    ctypes.windll.LoadLibrary(cudnn_dll)
+                    return True
+                except:
+                    continue
+    except:
+        pass
+    
+    # If DLL loading failed, still return True if paths exist
+    # (ONNX Runtime might handle DLL loading differently)
+    return cuda_exists and cudnn_exists
 
 def has_nvidia_gpu():
     """Check if system has NVIDIA GPU."""
@@ -145,7 +174,7 @@ def _try_create_rembg_cuda_session() -> tuple[bool, str]:
         return False, traceback.format_exc()
 
 def ensure_cuda_accessible() -> Dict[str, Any]:
-    """Set up CUDA and cuDNN access using predictable installation paths.
+    """Set up CUDA and cuDNN access using smart detection.
 
     Returns a dict with keys:
       - ok: bool (True if CUDA provider usable)
@@ -154,40 +183,54 @@ def ensure_cuda_accessible() -> Dict[str, Any]:
       - error: optional error string
     """
     result: Dict[str, Any] = {'ok': False, 'changed': False, 'messages': [], 'error': None}
+    
     try:
-        # Force-ensure CUDA bin on DLL search path and PATH so the process has a chance to find required DLLs
-        try:
-            added_cuda = _add_dll_directory(CUDA_BIN)
-            # _add_dll_directory returns False if it fell back to PATH or failed; ensure PATH contains it explicitly
-            path_added = _ensure_path_entry(CUDA_BIN) if not added_cuda else False
-            if added_cuda or path_added:
-                result['changed'] = True
-            result['messages'].append(f'Ensured CUDA bin on DLL search path / PATH: add_dll={added_cuda}, path_added={path_added}')
-            os.environ.setdefault('CUDA_PATH', CUDA_BIN)
-            result['messages'].append(f'Set CUDA_PATH to {CUDA_BIN}')
-        except Exception as e:
-            result['messages'].append(f'Failed to ensure CUDA bin: {e}')
+        # Get CUDA and cuDNN paths using smart detection
+        cuda_bin, cudnn_bin = get_cuda_paths()
+        
+        if not cuda_bin and not cudnn_bin:
+            result['messages'].append('No CUDA/cuDNN found via smart detection - will use CPU')
+            result['ok'] = False
+            return result
+        
+        # Setup CUDA bin if found
+        if cuda_bin and os.path.isdir(cuda_bin):
+            try:
+                added_cuda = _add_dll_directory(cuda_bin)
+                path_added = _ensure_path_entry(cuda_bin) if not added_cuda else False
+                if added_cuda or path_added:
+                    result['changed'] = True
+                result['messages'].append(f'Ensured CUDA bin: {cuda_bin} (add_dll={added_cuda}, path={path_added})')
+                os.environ.setdefault('CUDA_PATH', os.path.dirname(cuda_bin))  # Set to parent dir
+            except Exception as e:
+                result['messages'].append(f'Failed to ensure CUDA bin: {e}')
+        else:
+            result['messages'].append('CUDA not found - skipping CUDA setup')
+        
+        # Setup cuDNN bin if found
+        if cudnn_bin and os.path.isdir(cudnn_bin):
+            try:
+                added_cudnn = _add_dll_directory(cudnn_bin)
+                cudnn_path_added = _ensure_path_entry(cudnn_bin) if not added_cudnn else False
+                if added_cudnn or cudnn_path_added:
+                    result['changed'] = True
+                result['messages'].append(f'Ensured cuDNN bin: {cudnn_bin} (add_dll={added_cudnn}, path={cudnn_path_added})')
+                os.environ.setdefault('CUDNN_PATH', os.path.dirname(cudnn_bin))  # Set to parent dir
+            except Exception as e:
+                result['messages'].append(f'Failed to ensure cuDNN bin: {e}')
+        else:
+            result['messages'].append('cuDNN not found - some GPU operations may be slower')
 
-        # Force-ensure cuDNN bin on DLL search path and PATH
-        try:
-            added_cudnn = _add_dll_directory(CUDNN_BIN)
-            cudnn_path_added = _ensure_path_entry(CUDNN_BIN) if not added_cudnn else False
-            if added_cudnn or cudnn_path_added:
-                result['changed'] = True
-            result['messages'].append(f'Ensured cuDNN bin on DLL search path / PATH: add_dll={added_cudnn}, path_added={cudnn_path_added}')
-            os.environ.setdefault('CUDNN_PATH', CUDNN_BIN)
-            result['messages'].append(f'Set CUDNN_PATH to {CUDNN_BIN}')
-        except Exception as e:
-            result['messages'].append(f'Failed to ensure cuDNN bin: {e}')
-
-        # Attempt to create a rembg session regardless of whether the predicted directories physically exist.
-        # This lets us detect provider availability even if the DLLs are found via other mechanisms or the PATH we just added.
+        # Attempt to create a rembg session to verify provider availability
         ok, info = _try_create_rembg_cuda_session()
         result['ok'] = ok
-        result['messages'].append(f'CUDA session check: ok={ok}, info={info}')
-        if not os.path.isdir(CUDA_BIN) or not os.path.isdir(CUDNN_BIN):
-            result['messages'].append('Note: one or both predicted CUDA/cuDNN directories do not exist on disk; we forced them into the process PATH to help discovery.')
+        result['messages'].append(f'GPU session check: ok={ok}, info={info}')
+        
+        if not cuda_bin or not cudnn_bin:
+            result['messages'].append('Note: Not all GPU components found - will fallback to CPU if needed')
 
     except Exception as e:
         result['error'] = traceback.format_exc()
+        result['messages'].append(f'Exception during setup: {e}')
+    
     return result

@@ -14,7 +14,7 @@
 ::dAsiuh18IRvcCxnZtBJQ
 ::cRYluBh/LU+EWAnk
 ::YxY4rhs+aU+IeA==
-::cxY6rQJ7JhzQF1fEqQJhZksaHErSXA==
+::cxY6rQJ7JhzQF1fEqQJhZksaHErTXA==
 ::ZQ05rAF9IBncCkqN+0xwdVsFAlTMbCXqZg==
 ::ZQ05rAF9IAHYFVzEqQIbLRRaS0SuPX60Bb0Z+og=
 ::eg0/rx1wNQPfEVWB+kM9LVsJDC+HM2W9Rpkd/eb45++Vwg==
@@ -89,6 +89,9 @@ REM =====================================================================
 if exist "%PYTHON_DIR%" (
     echo Python installation found. Checking requirements...
     
+    REM Set ONNX Runtime logging level to suppress warnings
+    set "ORT_LOGGING_LEVEL=3"
+    
     REM Upgrade pip to the latest version
     echo Upgrading pip to the latest version...
     "%PYTHON_EXE%" -m pip install --upgrade pip --no-warn-script-location
@@ -100,10 +103,15 @@ if exist "%PYTHON_DIR%" (
     ) else (
         echo Warning: requirements.txt not found. Skipping package installation.
     )
+    
+    echo Starting application...
+    echo Note: CUDA/cuDNN will be auto-detected by Python if available
+    
+    REM Run application (Python will auto-detect CUDA/cuDNN)
     if exist "%PYTHONW%" (
-        start "" "%PYTHONW%" "%MAIN_PY%"
+        "%PYTHONW%" "%MAIN_PY%"
     ) else (
-        start "" "%PYTHON_EXE%" "%MAIN_PY%"
+        "%PYTHON_EXE%" "%MAIN_PY%"
     )
     exit /b 0
 )
@@ -175,11 +183,18 @@ if exist "%REQUIREMENTS_FILE%" (
 REM =====================================================================
 REM Launch the application
 REM =====================================================================
-echo Setup complete. Running main.py...
+echo Setup complete. Starting application...
+
+REM Set ONNX Runtime logging level
+set "ORT_LOGGING_LEVEL=3"
+
+echo Note: CUDA/cuDNN will be auto-detected by Python if available
+
+REM Run application (Python will auto-detect CUDA/cuDNN)
 if exist "%PYTHONW%" (
-    start "" "%PYTHONW%" "%MAIN_PY%"
+    "%PYTHONW%" "%MAIN_PY%"
 ) else (
-    start "" "%PYTHON_EXE%" "%MAIN_PY%"
+    "%PYTHON_EXE%" "%MAIN_PY%"
 )
 
 exit /b 0

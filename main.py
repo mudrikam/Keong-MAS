@@ -11,26 +11,34 @@ import os
 # Suppress ONNX Runtime error messages before any imports
 os.environ['ORT_LOGGING_LEVEL'] = '3'  # ERROR level only
 
-# Set up CUDA DLL paths BEFORE any imports
-cuda_bin = r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8\bin"
-cudnn_bin = r"C:\Program Files\NVIDIA\CUDNN\v9.5\bin\12.6"
-if hasattr(os, 'add_dll_directory'):
-    if os.path.isdir(cuda_bin):
-        os.add_dll_directory(cuda_bin)
-    if os.path.isdir(cudnn_bin):
-        os.add_dll_directory(cudnn_bin)
-
-# Also prepend to PATH
-if os.path.isdir(cuda_bin):
-    os.environ['PATH'] = cuda_bin + os.pathsep + os.environ.get('PATH', '')
-if os.path.isdir(cudnn_bin):
-    os.environ['PATH'] = cudnn_bin + os.pathsep + os.environ.get('PATH', '')
-
 # Ensure project root is on sys.path BEFORE importing local packages
 current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     # insert at front to ensure local APP package is preferred
     sys.path.insert(0, current_dir)
+
+# Smart CUDA/cuDNN detection and setup
+try:
+    from APP.helpers.cuda_finder import setup_cuda_environment
+    cuda_summary = setup_cuda_environment()
+    
+    # Print summary if CUDA/cuDNN found (using ASCII-safe characters)
+    if cuda_summary['cuda']['found'] or cuda_summary['cudnn']['found']:
+        if cuda_summary['cuda']['found']:
+            print(f"[OK] CUDA v{cuda_summary['cuda']['cuda_version']} detected: {cuda_summary['cuda']['cuda_bin']}")
+        if cuda_summary['cudnn']['found']:
+            cudnn_ver = cuda_summary['cudnn']['cudnn_version']
+            cuda_ver = cuda_summary['cudnn']['cuda_version']
+            if cuda_ver:
+                print(f"[OK] cuDNN v{cudnn_ver} (CUDA {cuda_ver}) detected: {cuda_summary['cudnn']['cudnn_bin']}")
+            else:
+                print(f"[OK] cuDNN v{cudnn_ver} detected: {cuda_summary['cudnn']['cudnn_bin']}")
+        print("=> GPU acceleration enabled")
+    else:
+        print("[INFO] No CUDA/cuDNN found - will use CPU for processing")
+except Exception as e:
+    print(f"[WARNING] CUDA detection error (will use CPU): {e}")
+    # Continue without GPU - app will fallback to CPU automatically
 
 # Apply GPU fixes BEFORE any imports that might load ONNX Runtime
 from APP.helpers.gpu_fix import ensure_cuda_accessible
