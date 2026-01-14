@@ -1,7 +1,6 @@
 PySide6
 QtAwesome
 rembg
-onnxruntime==1.22.0
 onnxruntime-gpu==1.23.2
 Pillow
 requests
