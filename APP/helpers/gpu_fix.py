@@ -124,10 +124,30 @@ def _add_dll_directory(path: str) -> bool:
         return False
 
 def get_available_ort_providers() -> list:
-    """Return list of providers available according to ONNX Runtime."""
+    """Return list of providers available according to ONNX Runtime.
+
+    Ensures CUDA/cuDNN DLL directories are added to the process before importing ONNX Runtime so
+    provider shared-libraries (e.g., the CUDA provider DLL) can be loaded successfully.
+    """
     try:
+        # Ensure CUDA/cuDNN DLL directories are visible to this process before importing onnxruntime
+        try:
+            cuda_bin, cudnn_bin = get_cuda_paths()
+            if cuda_bin and os.path.isdir(cuda_bin):
+                _add_dll_directory(cuda_bin)
+                _ensure_path_entry(cuda_bin)
+            if cudnn_bin and os.path.isdir(cudnn_bin):
+                _add_dll_directory(cudnn_bin)
+                _ensure_path_entry(cudnn_bin)
+        except Exception:
+            # Best-effort; if this fails, importing onnxruntime will still tell us if providers are usable
+            pass
+
         import onnxruntime as ort
-        return ort.get_available_providers()
+        try:
+            return ort.get_available_providers()
+        except Exception:
+            return []
     except Exception:
         return []
 
@@ -136,12 +156,41 @@ def detect_best_provider() -> str:
     """Detect the best available hardware provider.
 
     Priority: CUDAExecutionProvider > DmlExecutionProvider > ROCmExecutionProvider > CPUExecutionProvider
+
+    This function attempts to validate candidates by creating a lightweight rembg session so that we
+    don't pick a provider that is listed but fails to load at runtime due to missing DLLs.
     """
     providers = get_available_ort_providers()
     priority = ['CUDAExecutionProvider', 'DmlExecutionProvider', 'ROCMExecutionProvider']
+
     for p in priority:
         if p in providers:
-            return p
+            # Verify provider is functional by attempting to create a small test session
+            try:
+                import rembg
+                try:
+                    sess = rembg.new_session('isnet-general-use', providers=[p])
+                    provs = None
+                    if hasattr(sess, 'get_providers'):
+                        provs = sess.get_providers()
+                    elif hasattr(sess, '_sess') and hasattr(sess._sess, 'get_providers'):
+                        provs = sess._sess.get_providers()
+                    elif hasattr(sess, 'session') and hasattr(sess.session, 'get_providers'):
+                        provs = sess.session.get_providers()
+
+                    # If we cannot inspect reported providers but session creation succeeded, accept it
+                    if provs is None:
+                        return p
+
+                    if p in provs:
+                        return p
+                except Exception:
+                    # Provider reported by onnxruntime but failed to create a working session; skip
+                    continue
+            except Exception:
+                # If rembg is not importable in this context, fall back to trusting onnxruntime's listing
+                return p
+
     return 'CPUExecutionProvider'
 
 
