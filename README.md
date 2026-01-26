@@ -9,6 +9,9 @@
 
 # Keong MAS
 
+<img width="834" height="599" alt="image" src="https://github.com/user-attachments/assets/5b8518ac-e443-4c01-acaa-05afa5f3dffd" />
+
+
 Cuma script buat hapus background foto doang. Gak ada fitur lain. Udah, gitu aja.
 
 ## Tutorial Pemakaian
