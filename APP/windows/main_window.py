@@ -5,6 +5,7 @@ import re
 import sys
 import webbrowser
 import subprocess
+import json
 from PySide6.QtCore import Qt, QThread, QTimer, QSize, Signal
 from PySide6.QtGui import QIcon, QColor
 from PySide6.QtWidgets import (
@@ -190,10 +191,29 @@ class MainWindow(QMainWindow):
         self._last_completed_download_model = None
 
         # Connect download progress signal to UI slot
-        try:
-            self.downloadProgress.connect(self._on_download_progress_ui)
-        except Exception:
-            pass
+        self.downloadProgress.connect(self._on_download_progress_ui)
+
+        if hasattr(self, 'ui'):
+            if hasattr(self.ui, 'actionOpenFolder') and self.ui.actionOpenFolder:
+                self.ui.actionOpenFolder.triggered.connect(self._open_folder_dialog)
+            if hasattr(self.ui, 'actionOpenFiles') and self.ui.actionOpenFiles:
+                self.ui.actionOpenFiles.triggered.connect(self._open_files_dialog)
+            if hasattr(self.ui, 'actionOutputFolder') and self.ui.actionOutputFolder:
+                self.ui.actionOutputFolder.triggered.connect(self._on_output_location_clicked)
+            if hasattr(self.ui, 'actionShowModelDialog') and self.ui.actionShowModelDialog:
+                self.ui.actionShowModelDialog.triggered.connect(self._show_model_dialog)
+            if hasattr(self.ui, 'actionAbout') and self.ui.actionAbout:
+                self.ui.actionAbout.triggered.connect(self._show_about_dialog)
+            if hasattr(self.ui, 'actionExit') and self.ui.actionExit:
+                self.ui.actionExit.triggered.connect(self.close)
+
+            # If model dialog exists, forward its selection to the main model combo
+            if hasattr(self.ui, 'modelDialog') and getattr(self.ui.modelDialog, 'combo', None) is not None:
+                self.ui.modelDialog.combo.currentTextChanged.connect(lambda text: self.ui.modelComboBox.setCurrentText(text))
+
+            # If About menu WA action exists, connect
+            if hasattr(self.ui, 'actionWAGroup') and self.ui.actionWAGroup:
+                self.ui.actionWAGroup.triggered.connect(self._open_whatsapp)
 
         # Database for session tracking
         db_path = os.path.join(
@@ -1749,26 +1769,43 @@ class MainWindow(QMainWindow):
             success = model_manager.prepare_model(model_name=model_name, callback=self._download_progress_callback)
             # Ensure UI updated after download completes
             def finish_ui():
-                try:
-                    if success:
-                        # Show completion briefly then restore
-                        self.progress_bar.setValue(100)
-                        self.progress_bar.setFormat(f"Downloaded {model_name}")
-                        QTimer.singleShot(1200, self._restore_progress_bar)
-            
-                        print(f"Model {model_name} siap untuk digunakan")
-                    else:
-                        try:
-                            QMessageBox.warning(self, "Gagal", f"Gagal mengunduh model: {model_name}")
-                        except Exception:
-                            pass
-                        self._restore_progress_bar()
-                except Exception as e:
-                    print(f"Error updating UI after download: {str(e)}")
-
+                if success:
+                    self.progress_bar.setValue(100)
+                    self.progress_bar.setFormat(f"Downloaded {model_name}")
+                    QTimer.singleShot(1200, self._restore_progress_bar)
+                    print(f"Model {model_name} siap untuk digunakan")
+                else:
+                    QMessageBox.warning(self, "Gagal", f"Gagal mengunduh model: {model_name}")
             QTimer.singleShot(0, finish_ui)
 
         threading.Thread(target=download_worker, daemon=True).start()
+
+    def _show_model_dialog(self):
+        """Show the small Model selection dialog and sync with main model combobox."""
+        if not hasattr(self, 'ui'):
+            print("UI not initialized: cannot show model dialog")
+            return
+        if not hasattr(self.ui, 'modelDialog'):
+            print("Model dialog not available in UI")
+            return
+        if not hasattr(self.ui, 'modelComboBox'):
+            print("Main model combobox not available; cannot populate dialog")
+            return
+
+        models = [self.ui.modelComboBox.itemText(i) for i in range(self.ui.modelComboBox.count())]
+        self.ui.modelDialog.set_models(models)
+        self.ui.modelDialog.set_current(self.ui.modelComboBox.currentText())
+        self.ui.modelDialog.exec()
+
+    def _show_about_dialog(self):
+        """Show the About dialog; WA button opens the group link (uses existing _open_whatsapp)."""
+        if not hasattr(self, 'ui'):
+            print("UI not initialized: cannot show About dialog")
+            return
+        if not hasattr(self.ui, 'aboutDialog'):
+            print("About dialog not available in UI")
+            return
+        self.ui.aboutDialog.exec()
     
     def _on_output_location_clicked(self):
         """Handle output location button click."""
@@ -1794,13 +1831,12 @@ class MainWindow(QMainWindow):
         print("Output location cleared - using default PNG folder")
     
     def _open_whatsapp(self):
-        """Open WhatsApp group link."""
-        try:
-            webbrowser.open(self.WHATSAPP_GROUP_LINK)
-            print(f"Opened WhatsApp link: {self.WHATSAPP_GROUP_LINK}")
-        except Exception as e:
-            print(f"Error opening WhatsApp: {str(e)}")
-            QMessageBox.warning(self, "Error", f"Gagal membuka WhatsApp: {str(e)}")
+        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'config.json')
+        with open(config_path, 'r', encoding='utf-8') as cf:
+            cfg = json.load(cf)
+        link = cfg['app']['wa_group_link']
+        webbrowser.open(link)
+        print(f"Opened WhatsApp link: {link}")
     
     def _open_folder_dialog(self):
         """Handle open folder button click."""

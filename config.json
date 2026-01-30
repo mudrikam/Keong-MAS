@@ -19,7 +19,7 @@
             "quality": 90
         },
         "model": {
-            "selected": "isnet-general-use",
+            "selected": "BiRefNet-COD-epoch_125",
             "auto_fallback": true
         }
     },
@@ -34,6 +34,11 @@
     "app": {
         "show_success_stats": true,
         "always_on_top": true,
+        "version": "1.0.29",
+        "developer": "Desainya Studio",
+        "license": "MIT",
+        "about": "Aplikasi untuk menghapus latar belakang gambar secara otomatis dengan optimasi untuk produksi gambar cepat dan rapi. Didesain untuk kemudahan penggunaan.",
+        "wa_group_link": "https://chat.whatsapp.com/CMQvDxpCfP647kBBA6dRn3",
         "output_location": null
     }
 }
