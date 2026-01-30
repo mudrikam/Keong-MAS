@@ -19,7 +19,7 @@
             "quality": 90
         },
         "model": {
-            "selected": "BiRefNet-COD-epoch_125",
+            "selected": "isnet-general-use",
             "auto_fallback": true
         }
     },

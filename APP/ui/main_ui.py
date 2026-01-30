@@ -5,6 +5,7 @@ import qtawesome as qta
 import os
 import json
 from PySide6.QtGui import QPixmap, QFont, QIcon
+from APP.helpers.image_support import get_supported_extensions
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel,
     QPushButton, QCheckBox, QSpinBox, QSlider, QGroupBox, QSplitter, QComboBox
@@ -61,6 +62,10 @@ def create_main_ui(parent):
     action_output_folder.setObjectName('actionOutputFolder')
     action_output_folder.setIcon(qta.icon('fa5s.folder'))
     output_menu.addAction(action_output_folder)
+    action_open_output_folder = QAction('Buka Folder Output', parent)
+    action_open_output_folder.setObjectName('actionOpenOutputFolder')
+    action_open_output_folder.setIcon(qta.icon('fa5s.folder-open'))
+    output_menu.addAction(action_open_output_folder)
 
     model_menu = menu_bar.addMenu('Model')
     action_show_model_dialog = QAction('Pilih Model...', parent)
@@ -214,6 +219,8 @@ def create_main_ui(parent):
         'actionShowModelDialog': action_show_model_dialog,
         'actionAbout': action_about,
         'actionWAGroup': action_wa_group,
+        'actionOutputFolder': action_output_folder,
+        'actionOpenOutputFolder': action_open_output_folder,
         'actionExit': action_exit,
         'modelDialog': model_dialog,
         'aboutDialog': about_dialog,
@@ -232,35 +239,65 @@ def _create_drop_area():
         QFrame#drop_area_frame {
             border: 2px dashed #888;
             border-radius: 8px;
-            background-color: rgba(240, 240, 240, 30);
+            background-color: rgba(0, 0, 0, 20);
         }
-        QFrame#drop_area_frame[dragActive="true"] {
-            border: 3px dashed #4a6ea9;
-            background-color: rgba(200, 220, 255, 30);
+        QFrame#drop_area_frame[dragActive="true"][dragValid="true"] {
+            border: 3px dashed #0078FF;
+            background-color: rgba(0, 120, 255, 20);
+        }
+        QFrame#drop_area_frame[dragActive="true"][dragValid="false"] {
+            border: 3px dashed #FF3B30;
+            background-color: rgba(255, 59, 48, 20);
         }
     """)
     
     layout = QVBoxLayout(drop_frame)
-    
+    layout.setContentsMargins(12, 12, 12, 12)
+    layout.setSpacing(6)
+
     layout.addStretch()
-    
+
+    icon_label = QLabel()
+    icon_label.setObjectName('dnd_icon_label')
+    icon_pix = qta.icon('fa5s.images', color='#888').pixmap(QSize(72, 72))
+    icon_label.setPixmap(icon_pix)
+    icon_label.setAlignment(Qt.AlignCenter)
+    layout.addWidget(icon_label, alignment=Qt.AlignHCenter)
+
+    layout.addSpacing(8)
+
     label1 = QLabel("Seret gambarmu ke sini")
     label1.setObjectName('dnd_label_1')
     label1.setAlignment(Qt.AlignCenter)
-    label1.setStyleSheet("font-size: 28px; font-weight: bold;")
+    label1.setStyleSheet("font-size: 26px; font-weight: bold;")
     layout.addWidget(label1, alignment=Qt.AlignHCenter)
-    
-    label2 = QLabel("Aplikasi ini buat hapus background, itu doang.")
+
+    label2 = QLabel("Taruh file gambar di sini untuk menghapus latar belakang")
     label2.setObjectName('dnd_label_2')
     label2.setAlignment(Qt.AlignCenter)
     label2.setStyleSheet("font-size: 12px;")
     layout.addWidget(label2, alignment=Qt.AlignHCenter)
-    
-    label3 = QLabel("Gak usah klik aneh-aneh. Taruh aja, kelar.")
+
+    supported_exts = list(get_supported_extensions())
+    if '.png' not in supported_exts:
+        supported_exts.append('.png')
+
+    preferred = ['.png', '.jpg', '.jpeg', '.webp', '.avif', '.heif', '.tiff', '.bmp', '.gif']
+    ordered = []
+    for p in preferred:
+        if p in supported_exts and p not in ordered:
+            ordered.append(p)
+    rest = sorted(e for e in supported_exts if e not in ordered)
+    ordered.extend(rest)
+
+    ext_text = ", ".join(e.lstrip('.') for e in ordered)
+    label3 = QLabel(f"Format yang didukung: {ext_text}")
     label3.setObjectName('dnd_label_3')
     label3.setAlignment(Qt.AlignCenter)
+    label3.setStyleSheet("font-size: 11px; color: #bdbdbd")
+    label3.setWordWrap(True)
     layout.addWidget(label3, alignment=Qt.AlignHCenter)
-    
+
     layout.addStretch()
     
     return drop_frame

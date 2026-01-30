@@ -6,6 +6,7 @@ import sys
 import webbrowser
 import subprocess
 import json
+from APP.helpers.image_support import extension_supported, get_supported_extensions
 from PySide6.QtCore import Qt, QThread, QTimer, QSize, Signal
 from PySide6.QtGui import QIcon, QColor
 from PySide6.QtWidgets import (
@@ -36,6 +37,11 @@ from APP.helpers import model_manager
 from PySide6.QtCore import QObject, Slot
 from PySide6.QtCore import Signal as QtSignal
 import threading
+
+CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "config.json")
+with open(CONFIG_PATH, 'r', encoding='utf-8') as _cfg_f:
+    _cfg = json.load(_cfg_f)
+APP_VERSION = _cfg['app']['version']
 
 
 class MaskWorker(QObject):
@@ -143,7 +149,7 @@ class MainWindow(QMainWindow):
     # Signal to receive download progress safely in the GUI thread
     downloadProgress = Signal(str, float)
     
-    WINDOW_TITLE = "Keong MAS (Kecilin Ongkos, Masking Auto Selesai)"
+    WINDOW_TITLE = f"Keong MAS v{APP_VERSION} (Kecilin Ongkos, Masking Auto Selesai)"
     DEFAULT_SIZE = (800, 550)
     WHATSAPP_GROUP_LINK = "https://chat.whatsapp.com/CMQvDxpCfP647kBBA6dRn3"
     
@@ -200,6 +206,8 @@ class MainWindow(QMainWindow):
                 self.ui.actionOpenFiles.triggered.connect(self._open_files_dialog)
             if hasattr(self.ui, 'actionOutputFolder') and self.ui.actionOutputFolder:
                 self.ui.actionOutputFolder.triggered.connect(self._on_output_location_clicked)
+            if hasattr(self.ui, 'actionOpenOutputFolder') and self.ui.actionOpenOutputFolder:
+                self.ui.actionOpenOutputFolder.triggered.connect(self._open_output_folder)
             if hasattr(self.ui, 'actionShowModelDialog') and self.ui.actionShowModelDialog:
                 self.ui.actionShowModelDialog.triggered.connect(self._show_model_dialog)
             if hasattr(self.ui, 'actionAbout') and self.ui.actionAbout:
@@ -1823,6 +1831,131 @@ class MainWindow(QMainWindow):
             set_output_location(folder_path)
             self._update_output_location_display()
             print(f"Output location set to: {folder_path}")
+
+    def _open_output_folder(self):
+        """Open the configured output folder in the OS file explorer.
+
+        If no output folder is configured, prompt the user to choose one (warning dialog).
+        If folder does not exist, offer to select a new folder.
+        """
+        out = get_output_location()
+
+        if not out:
+            # Try to locate per-file output directories created by recent processing before prompting the user
+            candidate_dir = None
+            try:
+                # Prefer outputs recorded in the current session (if any)
+                if getattr(self, 'current_session_id', None):
+                    files = self.db.get_session_files(self.current_session_id)
+                    for f in files:
+                        op = f.get('output_path')
+                        if op and os.path.exists(op):
+                            candidate_dir = os.path.dirname(op)
+                            break
+            except Exception as e:
+                print(f"Error checking session outputs: {e}")
+
+            # If no session outputs found, scan the last processed file folders for a PNG output directory
+            if not candidate_dir and getattr(self, 'last_processed_files', None):
+                try:
+                    for fp in reversed(self.last_processed_files):
+                        png_dir = os.path.join(os.path.dirname(fp), 'PNG')
+                        if os.path.isdir(png_dir):
+                            try:
+                                has_png = any(name.lower().endswith('.png') for name in os.listdir(png_dir))
+                            except Exception:
+                                has_png = False
+                            if has_png:
+                                candidate_dir = png_dir
+                                break
+                except Exception as e:
+                    print(f"Error scanning last processed folders: {e}")
+
+            if candidate_dir:
+                try:
+                    if sys.platform == 'win32':
+                        os.startfile(candidate_dir)
+                    elif sys.platform == 'darwin':
+                        subprocess.run(['open', candidate_dir], check=True)
+                    else:
+                        subprocess.run(['xdg-open', candidate_dir], check=True)
+                    print(f"Opened per-file output folder: {candidate_dir}")
+                except Exception as e:
+                    print(f"Error opening folder {candidate_dir}: {e}")
+                return
+
+            # No per-file outputs found; prompt user to select or create a global output folder
+            reply = QMessageBox.warning(
+                self,
+                "Folder output belum dikonfigurasi",
+                "Folder output belum dikonfigurasi. Pilih folder output sekarang atau lakukan proses penghapusan latar belakang terlebih dahulu sehingga folder output akan dibuat.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Yes
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                folder_path = QFileDialog.getExistingDirectory(
+                    self,
+                    "Pilih Folder Output",
+                    os.path.expanduser("~"),
+                    QFileDialog.ShowDirsOnly
+                )
+                if folder_path:
+                    set_output_location(folder_path)
+                    self._update_output_location_display()
+                    try:
+                        if sys.platform == 'win32':
+                            os.startfile(folder_path)
+                        elif sys.platform == 'darwin':
+                            subprocess.run(['open', folder_path], check=True)
+                        else:
+                            subprocess.run(['xdg-open', folder_path], check=True)
+                        print(f"Opened output folder: {folder_path}")
+                    except Exception as e:
+                        print(f"Error opening folder {folder_path}: {e}")
+            else:
+                print("User cancelled choosing output folder.")
+            return
+
+        if not os.path.exists(out):
+            reply = QMessageBox.warning(
+                self,
+                "Folder output tidak ditemukan",
+                f"Folder output yang dikonfigurasi tidak ditemukan:\n{out}\n\nPilih folder output baru?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Yes
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                folder_path = QFileDialog.getExistingDirectory(
+                    self,
+                    "Pilih Folder Output",
+                    os.path.expanduser("~"),
+                    QFileDialog.ShowDirsOnly
+                )
+                if folder_path:
+                    set_output_location(folder_path)
+                    self._update_output_location_display()
+                    try:
+                        if sys.platform == 'win32':
+                            os.startfile(folder_path)
+                        elif sys.platform == 'darwin':
+                            subprocess.run(['open', folder_path], check=True)
+                        else:
+                            subprocess.run(['xdg-open', folder_path], check=True)
+                        print(f"Opened output folder: {folder_path}")
+                    except Exception as e:
+                        print(f"Error opening folder {folder_path}: {e}")
+            return
+
+        try:
+            if sys.platform == 'win32':
+                os.startfile(out)
+            elif sys.platform == 'darwin':
+                subprocess.run(['open', out], check=True)
+            else:
+                subprocess.run(['xdg-open', out], check=True)
+            print(f"Opened output folder: {out}")
+        except Exception as e:
+            print(f"Error opening output folder {out}: {e}")
     
     def _on_clear_output_clicked(self):
         """Clear output location to use default."""
@@ -1860,11 +1993,15 @@ class MainWindow(QMainWindow):
     
     def _open_files_dialog(self):
         """Handle open files button click."""
+        exts = sorted(get_supported_extensions())
+        patterns = ' '.join(f"*{e}" for e in exts)
+        filter_str = f"Gambar ({patterns})"
+
         file_paths, _ = QFileDialog.getOpenFileNames(
             self,
             "Pilih Gambar",
             os.path.expanduser("~"),
-            "Gambar (*.jpg *.jpeg *.png *.bmp *.webp)"
+            filter_str
         )
         
         if file_paths:
@@ -2222,18 +2359,41 @@ class MainWindow(QMainWindow):
         return fallback
     
     def dragEnterEvent(self, event):
-        """Handle drag enter event."""
-        if event.mimeData().hasUrls():
-            event.acceptProposedAction()
-            self.drop_area.setProperty("dragActive", True)
-            self.drop_area.style().unpolish(self.drop_area)
-            self.drop_area.style().polish(self.drop_area)
-        else:
+        """Handle drag enter event with validation of file types.
+
+        Sets `dragActive` and `dragValid` properties on the drop area so stylesheet
+        can show blue/red border and the icon color is updated accordingly.
+        """
+        if not event.mimeData().hasUrls():
             event.ignore()
+            return
+
+        urls = [url.toLocalFile() for url in event.mimeData().urls()]
+        # Determine validity based on extensions supported by Pillow
+        supported_exts = get_supported_extensions()
+        has_valid = any((os.path.splitext(u)[1].lower() in supported_exts) for u in urls if u)
+
+        event.acceptProposedAction()
+        self.drop_area.setProperty("dragActive", True)
+        self.drop_area.setProperty("dragValid", bool(has_valid))
+        # Update icon color immediately
+        icon_label = self.drop_area.findChild(type(self.drop_area.findChild(object, 'dnd_icon_label')), 'dnd_icon_label')
+        if icon_label is not None:
+                    if has_valid:
+                        icon_label.setPixmap(qta.icon('fa5s.images', color='#0078FF').pixmap(QSize(72, 72)))
+                    else:
+                        icon_label.setPixmap(qta.icon('fa5s.images', color='#FF3B30').pixmap(QSize(72, 72)))
+        self.drop_area.style().unpolish(self.drop_area)
+        self.drop_area.style().polish(self.drop_area)
     
     def dragLeaveEvent(self, event):
-        """Handle drag leave event."""
+        """Handle drag leave event: restore default visuals."""
         self.drop_area.setProperty("dragActive", False)
+        self.drop_area.setProperty("dragValid", False)
+        # Reset icon to neutral
+        icon_label = self.drop_area.findChild(type(self.drop_area.findChild(object, 'dnd_icon_label')), 'dnd_icon_label')
+        if icon_label is not None:
+            icon_label.setPixmap(qta.icon('fa5s.images', color='#888').pixmap(QSize(72, 72)))
         self.drop_area.style().unpolish(self.drop_area)
         self.drop_area.style().polish(self.drop_area)
         event.accept()
@@ -2244,6 +2404,12 @@ class MainWindow(QMainWindow):
             event.acceptProposedAction()
             
             self.drop_area.setProperty("dragActive", False)
+            self.drop_area.setProperty("dragValid", False)
+            # Reset icon to neutral
+            icon_label = self.drop_area.findChild(type(self.drop_area.findChild(object, 'dnd_icon_label')), 'dnd_icon_label')
+            if icon_label is not None:
+                icon_label.setPixmap(qta.icon('fa5s.images', color='#888').pixmap(QSize(72, 72)))
+
             self.drop_area.style().unpolish(self.drop_area)
             self.drop_area.style().polish(self.drop_area)
             

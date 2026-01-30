@@ -29,11 +29,8 @@ class RemBgWorker(QObject):
     # Signal for model download progress: (model_name, progress_percent)
     download_progress = Signal(str, float)
 
-    SUPPORTED_EXTENSIONS = {
-        '.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tiff', '.tif', 
-        '.gif', '.ico', '.ppm', '.pgm', '.pbm', '.pnm', '.pfm',
-        '.sgi', '.tga', '.xbm', '.xpm', '.avif', '.heif', '.heic'
-    }
+    from APP.helpers.image_support import get_supported_extensions
+    SUPPORTED_EXTENSIONS = get_supported_extensions()
     PROCESSING_TIMEOUT = 300
     
     def __init__(self, file_paths, output_dir=None):

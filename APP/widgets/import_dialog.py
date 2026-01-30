@@ -4,11 +4,9 @@ from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QProgressBar, QPushB
 from PySide6.QtCore import QObject, Signal, Slot, QThread
 import qtawesome as qta
 
-SUPPORTED_EXTENSIONS = {
-    '.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tiff', '.tif',
-    '.gif', '.ico', '.ppm', '.pgm', '.pbm', '.pnm', '.pfm',
-    '.sgi', '.tga', '.xbm', '.xpm', '.avif', '.heif', '.heic'
-}
+from APP.helpers.image_support import get_supported_extensions
+
+SUPPORTED_EXTENSIONS = get_supported_extensions()
 
 
 class ImportWorker(QObject):
