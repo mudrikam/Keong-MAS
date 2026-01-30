@@ -147,18 +147,11 @@ jobs:
                   release = await octokit.rest.repos.getReleaseByTag({ owner, repo, tag: 'latest' });
                   console.log(`Found existing release id=${release.data.id} for tag 'latest'`);
 
-                  const oldBody = release.data.body || '';
-                  const line = `**latest tag commit:** ${sha} (short: ${sha.substring(0,7)})`;
-
-                  // replace existing line if any, otherwise append
-                  const newBody = oldBody.replace(/\*\*latest tag commit:\*\*.*(?:\r\n|\n)?/i, `${line}\n`);
-                  const finalBody = (newBody === oldBody) ? (oldBody + `\n\n${line}`) : newBody;
-
-                  await octokit.rest.repos.updateRelease({ owner, repo, release_id: release.data.id, name: 'Download Keong-MAS', body: finalBody });
-                  console.log('Updated release "Download Keong-MAS" body for tag latest (via octokit)');
+                  await octokit.rest.repos.updateRelease({ owner, repo, release_id: release.data.id, name: 'Download Keong-MAS' });
+                  console.log('Updated release "Download Keong-MAS" for tag latest (via octokit)');
                 } catch (getErr) {
                   // If not found, create a release with tag 'latest' (assets should be uploaded by the build job)
-                  const createResp = await octokit.rest.repos.createRelease({ owner, repo, tag_name: 'latest', name: 'Download Keong-MAS', body: `**latest tag commit:** ${sha} (short: ${sha.substring(0,7)})`, draft: false, prerelease: false, target_commitish: sha });
+                  const createResp = await octokit.rest.repos.createRelease({ owner, repo, tag_name: 'latest', name: 'Download Keong-MAS', body: '', draft: false, prerelease: false, target_commitish: sha });
                   console.log(`Created release 'Download Keong-MAS' for tag 'latest' id=${createResp.data.id} (via octokit)`);
                   release = { data: createResp.data };
                 }
