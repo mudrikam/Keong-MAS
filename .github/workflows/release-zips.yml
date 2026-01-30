@@ -1,0 +1,40 @@
+name: Create Release ZIPs
+
+on:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: write
+
+jobs:
+  create-zips:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Create ZIP file
+        run: |
+          # Create temporary directory for zipping
+          mkdir -p temp_zip
+
+          # Copy all files except .git directory
+          rsync -av --exclude='.git' --exclude='temp_zip' ./ temp_zip/
+
+          # Create single ZIP file with the repository content
+          cd temp_zip
+          zip -r ../Keong-MAS.zip . -x "*.git*"
+          cd ..
+
+      - name: Upload ZIP artifact (on push to main)
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Keong-MAS
+          path: Keong-MAS.zip
+
+      - name: Cleanup temporary files
+        run: |
+          rm -rf temp_zip Keong-MAS.zip

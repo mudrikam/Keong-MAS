@@ -2359,45 +2359,65 @@ class MainWindow(QMainWindow):
         return fallback
     
     def dragEnterEvent(self, event):
-        """Handle drag enter event with validation of file types.
-
-        Sets `dragActive` and `dragValid` properties on the drop area so stylesheet
-        can show blue/red border and the icon color is updated accordingly.
-        """
         if not event.mimeData().hasUrls():
             event.ignore()
             return
 
         urls = [url.toLocalFile() for url in event.mimeData().urls()]
-        # Determine validity based on extensions supported by Pillow
         supported_exts = get_supported_extensions()
         has_valid = any((os.path.splitext(u)[1].lower() in supported_exts) for u in urls if u)
 
         event.acceptProposedAction()
         self.drop_area.setProperty("dragActive", True)
         self.drop_area.setProperty("dragValid", bool(has_valid))
-        # Update icon color immediately
         icon_label = self.drop_area.findChild(type(self.drop_area.findChild(object, 'dnd_icon_label')), 'dnd_icon_label')
         if icon_label is not None:
-                    if has_valid:
-                        icon_label.setPixmap(qta.icon('fa5s.images', color='#0078FF').pixmap(QSize(72, 72)))
-                    else:
-                        icon_label.setPixmap(qta.icon('fa5s.images', color='#FF3B30').pixmap(QSize(72, 72)))
+            if has_valid:
+                icon_label.setPixmap(qta.icon('fa5s.images', color='#0078FF').pixmap(QSize(72, 72)))
+            else:
+                icon_label.setPixmap(qta.icon('fa5s.images', color='#FF3B30').pixmap(QSize(72, 72)))
         self.drop_area.style().unpolish(self.drop_area)
         self.drop_area.style().polish(self.drop_area)
-    
+
+    def dragMoveEvent(self, event):
+        if not event.mimeData().hasUrls():
+            event.ignore()
+            return
+
+        urls = [url.toLocalFile() for url in event.mimeData().urls()]
+        supported_exts = get_supported_extensions()
+        unsupported = sorted({os.path.splitext(u)[1].lower() for u in urls if u and os.path.splitext(u)[1].lower() not in supported_exts})
+
+        icon_label = self.drop_area.findChild(type(self.drop_area.findChild(object, 'dnd_icon_label')), 'dnd_icon_label')
+        if unsupported:
+            if icon_label is not None:
+                icon_label.setPixmap(qta.icon('fa5s.ban', color='#FF3B30').pixmap(QSize(72, 72)))
+            self.dnd_label_1.setText('Format tidak didukung')
+            exts = ", ".join(unsupported)
+            self.dnd_label_2.setText(f'Format berikut tidak didukung: {exts}')
+            self.drop_area.setProperty('dragValid', False)
+        else:
+            if icon_label is not None:
+                icon_label.setPixmap(qta.icon('fa5s.images', color='#0078FF').pixmap(QSize(72, 72)))
+            self.dnd_label_1.setText(self.original_label1_text)
+            self.dnd_label_2.setText(self.original_label2_text)
+            self.drop_area.setProperty('dragValid', True)
+
+        self.drop_area.style().unpolish(self.drop_area)
+        self.drop_area.style().polish(self.drop_area)
+        event.acceptProposedAction()
+
     def dragLeaveEvent(self, event):
-        """Handle drag leave event: restore default visuals."""
         self.drop_area.setProperty("dragActive", False)
         self.drop_area.setProperty("dragValid", False)
-        # Reset icon to neutral
         icon_label = self.drop_area.findChild(type(self.drop_area.findChild(object, 'dnd_icon_label')), 'dnd_icon_label')
         if icon_label is not None:
             icon_label.setPixmap(qta.icon('fa5s.images', color='#888').pixmap(QSize(72, 72)))
+        self.dnd_label_1.setText(self.original_label1_text)
+        self.dnd_label_2.setText(self.original_label2_text)
         self.drop_area.style().unpolish(self.drop_area)
         self.drop_area.style().polish(self.drop_area)
-        event.accept()
-    
+        event.accept()    
     def dropEvent(self, event):
         """Handle drop event."""
         if event.mimeData().hasUrls():
